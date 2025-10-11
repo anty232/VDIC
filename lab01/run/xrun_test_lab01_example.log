@@ -1,0 +1,65 @@
+TOOL:	xrun(64)	24.09-s005: Started on Oct 10, 2025 at 14:23:24 CEST
+xrun
+	-F ../tb/tb.f
+		../../common/simple_uart_switch.svp
+		simple_uart_switch_tb.sv
+	-v93
+	+nowarnDSEM2009
+	+nowarnDSEMEL
+	+nowarnCGDEFN
+	+nowarnCOVUTA
+	+nowarnBADPRF
+	+nowarnXCLGNOPTM
+	+nowarnRNDXCELON
+	+nowarnSAWSTP
+	-xmlibdirname INCA_libs
+	+overwrite
+	-nocopyright
+	-coverage all
+	-covoverwrite
+	-covfile xrun_covfile.txt
+	+UVM_TESTNAME=lab01_example
+	-l xrun_test_lab01_example.log
+Compiling UVM packages (uvm_pkg.sv cdns_uvm_pkg.sv) using uvmhome location /eda/cadence/2024-25/RHELx86/XCELIUM_24.09.005/tools/methodology/UVM/CDNS-1.1d
+		Caching library 'worklib' ....... Done
+	Elaborating the design hierarchy:
+	Top level design units:
+		simple_uart_switch_tb
+
+	Extracting FSMs for coverage:
+		worklib.simple_uart_switch_tb
+	Total FSMs extracted = 0
+	Building instance overlay tables: .................... Done
+	Enabling instrumentation for coverage types: block expression FSM toggle functional
+	Building instance specific data structures.
+	Performing constant object marking (COM) analysis.
+	Loading native compiled code:     .................... Done
+	Design hierarchy summary:
+		              Instances  Unique
+		Modules:              2       2
+		Registers:           27      27
+		Scalar wires:         7       -
+		Always blocks:        3       3
+		Initial blocks:       2       2
+		Cont. assignments:    1       2
+		Pseudo assignments:   1       -
+	Writing initial simulation snapshot: worklib.simple_uart_switch_tb:sv
+Loading snapshot worklib.simple_uart_switch_tb:sv .................... Done
+xcelium> source /eda/cadence/2024-25/RHELx86/XCELIUM_24.09.005/tools/xcelium/files/xmsimrc
+xcelium> source /eda/cadence/2024-25/RHELx86/XCELIUM_24.09.005/tools/methodology/UVM/CDNS-1.1d/additions/sv/files/tcl/uvm_sim.tcl
+xcelium> run
+Simulation complete via $finish(1) at time 70 NS + 0
+../tb/simple_uart_switch_tb.sv:33         $finish();
+xcelium> exit
+See ./cov_work/scope/test/icc.com file for message(s) on coverage constant object marking
+
+coverage setup:
+  workdir  :  ./cov_work
+  dutinst  :  simple_uart_switch_tb(simple_uart_switch_tb)
+  scope    :  scope
+  testname :  test
+
+coverage files:
+  model(design data) :  ./cov_work/scope/icc_4259aaa6_00000000.ucm
+  data               :  ./cov_work/scope/test/icc_4259aaa6_00000000.ucd
+TOOL:	xrun(64)	24.09-s005: Exiting on Oct 10, 2025 at 14:23:26 CEST  (total: 00:00:02)
