@@ -21,6 +21,14 @@ module simple_uart_switch_tb;
     logic sout0;
     logic sout1;
 
+//------------------------------------------------------------------------------
+// Global queque and variables
+//------------------------------------------------------------------------------
+
+
+    bit sent_bits[$];
+    bit capture_done = 0;       // flaga: 1 po zakończeniu akwizycji
+
 
 //------------------------------------------------------------------------------
 // Type definitions
@@ -85,16 +93,20 @@ module simple_uart_switch_tb;
           parity = ^data; // even parity → parity bit = parity of data (XOR)
           // start bit
           sin = 0; #(CLK_PERIOD*CLKS_PER_BIT);
+          sent_bits.push_back(0);
           // data bits LSB first
           for (i = 0; i < 8; i++) begin
             sin = data[i];
+            sent_bits.push_back(data[i]);
             #(CLK_PERIOD*CLKS_PER_BIT);
           end
           // parity bit (even parity)
           sin = parity;
+          sent_bits.push_back(parity);
           #(CLK_PERIOD*CLKS_PER_BIT);
           // stop bit
           sin = 1;
+          sent_bits.push_back(1);
           #(CLK_PERIOD*CLKS_PER_BIT);
         end
     endtask
@@ -106,24 +118,29 @@ module simple_uart_switch_tb;
         end
     endtask
 
+    task send_uart_byte_test(input start_bit, input [7:0] data, input parity_bit, input end_bit);
+        integer i;
+        
+        begin
 
-    task automatic capture_uart_line(
-        input  logic line,      // sygnał UART do rejestracji
-        output bit bits_queue[$], // kolejka dynamiczna z zapisanymi bitami
-        input  int num_cycles // ile cykli zegara próbkujemy
-    );
-        int i;
-    begin
-        bits_queue.delete(); // wyczyść kolejkę przed użyciem
-    
-        for (i = 0; i < num_cycles; i++) begin
-            bits_queue.push_back(line); // dodaj aktualny stan linii
-            @(posedge clk);             // czekaj jeden cykl zegara
+          // start bit
+          sin = start_bit; #(CLK_PERIOD*CLKS_PER_BIT);
+          // data bits LSB first
+          for (i = 0; i < 8; i++) begin
+            sin = data[i];
+            #(CLK_PERIOD*CLKS_PER_BIT);
+          end
+          // parity bit (even parity)
+          sin = parity_bit;
+          #(CLK_PERIOD*CLKS_PER_BIT);
+          // stop bit
+          sin = end_bit;
+          #(CLK_PERIOD*CLKS_PER_BIT);
         end
-    end
     endtask
 
-    
+
+
 
 //------------------------------------------------------------------------------
 // Utility for color printing
@@ -149,12 +166,14 @@ module simple_uart_switch_tb;
       bit bits_queue[$]; // dynamiczna kolejka na zapisane bity
       int bit_index;
       int sample_count_per_bit = 16; // czas trwania jednego bitu w cyklach zegara
-      int total_bits = 22;           // liczba bitów do zebrania po starcie
+      int total_bits = 21;           // liczba bitów do zebrania po starcie
+      
       
       initial begin
           sout1_prev = 1'b1; // UART idle
           bits_queue.delete();
-      
+
+          capture_done = 0;
           forever begin
               @(posedge clk);
       
@@ -169,8 +188,13 @@ module simple_uart_switch_tb;
                       repeat(sample_count_per_bit) @(posedge clk);
                       bits_queue.push_back(sout1);
                   end
-      
+                  bits_queue.push_front(0);
+
+                  // zakończone próbkowanie
+                  capture_done = 1;
+                  $display("[%0t] Akwizycja zakończona, zebrano %0d bitów", $time, bits_queue.size());
                   // zakończone próbkowanie  wypisz wynik
+
                   $display("[%0t] Zebrane bity z sout1 (%0d bitów):", $time, bits_queue.size());
                   foreach (bits_queue[i])
                       $write("%0d", bits_queue[i]);
@@ -190,44 +214,62 @@ module simple_uart_switch_tb;
         test_result_t result;
         static logic [7:0] addr = 8'h88;
         static logic [7:0] data = 8'h99;
-        bit rx_queue[$];
-
+  
+        int mismatches = 0;
+        int min_len;
  
 
 
         reset_SWITCH();
         #(10*CLK_PERIOD);
 
-        $display("[%0t] Start testu", $time);
+        $display("[%0t] Start testu port sout1", $time);
 
         $display("[%0t] Programowanie: addr=0xAB -> port1", $time);
         prog = 1;
+        capture_done = 0;
+
         send_uart_packet(addr, 8'h01);
         #(10*CLK_PERIOD);
         
+        sent_bits.delete();
+
         $display("[%0t] Test forwarding", $time);
         prog = 0;
 
-   
+        
         send_uart_packet(addr, data);               // wysyłamy pakiet
-            
+        
+        wait (capture_done == 1);    
 
          
-        if (rx_queue.size() == 2 &&
-            rx_queue[0] == addr &&
-            rx_queue[1] == data)
-            print_colored("TEST PASSED", "green");
-        else
-            print_colored("TEST FAILED", "red");
-        
-                // wypisanie jako ciąg 0 i 1
-        $write("UART bits: ");
-        foreach (rx_queue[i]) begin
-            $write("%b", rx_queue[i]);
+        min_len = 22;
+
+        for (int i = 0; i < min_len; i++) begin
+            if (sent_bits[i] !== bits_queue[i]) begin
+                $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue[i]);
+                mismatches++;
+            end
         end
-        $display(""); // przejście do nowej linii
+
+        if (mismatches == 0)
+            print_colored("TEST PASSED  pakiet na sout1 zgodny z sin", "green");
+        else
+            print_colored($sformatf("TEST FAILED  %0d bitów różnicy", mismatches), "red");
 
         $display("[%0t] Test zakonczony", $time);
+
+        //Diagnostyka
+
+        $write("Wyslane bity (sin): ");
+        foreach (sent_bits[i]) $write("%0d", sent_bits[i]);
+        $write("\n");
+
+        $write("Odebrane bity (sout1): ");
+        foreach (bits_queue[i]) $write("%0d", bits_queue[i]);
+        $write("\n");
+
+
 
         repeat(10000)
             @(posedge clk);
