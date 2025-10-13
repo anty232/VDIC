@@ -9,7 +9,7 @@ module simple_uart_switch_tb;
 
     localparam CLK_PERIOD = 10;       // 100 MHz
     localparam CLKS_PER_BIT = 16;
-
+    localparam BIT_TIME  = CLK_PERIOD * CLKS_PER_BIT; // czas trwania jednego bitu
 //------------------------------------------------------------------------------
 // Local variables
 //------------------------------------------------------------------------------
@@ -97,14 +97,33 @@ module simple_uart_switch_tb;
           sin = 1;
           #(CLK_PERIOD*CLKS_PER_BIT);
         end
-      endtask
+    endtask
 
-      task send_uart_packet(input [7:0] b0, input [7:0] b1);
+    task send_uart_packet(input [7:0] b0, input [7:0] b1);
         begin
           send_uart_byte(b0);
           send_uart_byte(b1);
         end
-      endtask
+    endtask
+
+
+    task automatic capture_uart_line(
+        input  logic line,      // sygnał UART do rejestracji
+        output bit bits_queue[$], // kolejka dynamiczna z zapisanymi bitami
+        input  int num_cycles // ile cykli zegara próbkujemy
+    );
+        int i;
+    begin
+        bits_queue.delete(); // wyczyść kolejkę przed użyciem
+    
+        for (i = 0; i < num_cycles; i++) begin
+            bits_queue.push_back(line); // dodaj aktualny stan linii
+            @(posedge clk);             // czekaj jeden cykl zegara
+        end
+    end
+    endtask
+
+    
 
 //------------------------------------------------------------------------------
 // Utility for color printing
@@ -123,6 +142,45 @@ module simple_uart_switch_tb;
         end
       endfunction
 
+// ---------------------------
+// Monitor wyjścia sout1
+// ---------------------------
+      bit sout1_prev;
+      bit bits_queue[$]; // dynamiczna kolejka na zapisane bity
+      int bit_index;
+      int sample_count_per_bit = 16; // czas trwania jednego bitu w cyklach zegara
+      int total_bits = 22;           // liczba bitów do zebrania po starcie
+      
+      initial begin
+          sout1_prev = 1'b1; // UART idle
+          bits_queue.delete();
+      
+          forever begin
+              @(posedge clk);
+      
+              // wykrycie start bitu (1 -> 0)
+              if (sout1_prev === 1 && sout1 === 0) begin
+                  $display("[%0t] Start bit wykryty na sout1", $time);
+      
+                  bits_queue.delete();
+      
+                  // próbkuj po 16 cykli zegara każdy bit
+                  for (bit_index = 0; bit_index < total_bits; bit_index++) begin
+                      repeat(sample_count_per_bit) @(posedge clk);
+                      bits_queue.push_back(sout1);
+                  end
+      
+                  // zakończone próbkowanie  wypisz wynik
+                  $display("[%0t] Zebrane bity z sout1 (%0d bitów):", $time, bits_queue.size());
+                  foreach (bits_queue[i])
+                      $write("%0d", bits_queue[i]);
+                  $write("\n\n");
+              end
+      
+              sout1_prev = sout1;
+          end
+      end
+
 //------------------------------------------------------------------------------
 // Sekwencja testowa
 //------------------------------------------------------------------------------
@@ -130,49 +188,48 @@ module simple_uart_switch_tb;
     initial begin
 
         test_result_t result;
-        bit expected_port, actual_port;
-        bit activity0, activity1;
+        static logic [7:0] addr = 8'h88;
+        static logic [7:0] data = 8'h99;
+        bit rx_queue[$];
+
+ 
+
 
         reset_SWITCH();
         #(10*CLK_PERIOD);
 
         $display("[%0t] Start testu", $time);
 
-        $display("[%0t] Programowanie: addr=0xAA -> port1", $time);
+        $display("[%0t] Programowanie: addr=0xAB -> port1", $time);
         prog = 1;
-        send_uart_packet(8'hAA, 8'h01);
-        #(1000);
+        send_uart_packet(addr, 8'h01);
+        #(10*CLK_PERIOD);
         
         $display("[%0t] Test forwarding", $time);
         prog = 0;
-        send_uart_packet(8'hAA, 8'h55);
 
-        // Step 3: Detect activity on outputs
+   
+        send_uart_packet(addr, data);               // wysyłamy pakiet
+            
 
-        activity0 = 0;
-        activity1 = 0;
-        repeat (CLKS_PER_BIT*30) begin
-          @(posedge clk);
-          if (sout0 === 0) activity0 = 1;
-          if (sout1 === 0) activity1 = 1;
+         
+        if (rx_queue.size() == 2 &&
+            rx_queue[0] == addr &&
+            rx_queue[1] == data)
+            print_colored("TEST PASSED", "green");
+        else
+            print_colored("TEST FAILED", "red");
+        
+                // wypisanie jako ciąg 0 i 1
+        $write("UART bits: ");
+        foreach (rx_queue[i]) begin
+            $write("%b", rx_queue[i]);
         end
-    
-        expected_port = 1'b1;                                       // we programmed addr 0xAA -> port1 type what you expect
-        actual_port   = (activity1 && !activity0) ? 1'b1 :
-                        (activity0 && !activity1) ? 1'b0 : 1'bx;
-    
-        // Step 4: Check result
-        if (actual_port === expected_port) begin
-          print_colored("TEST PASSED", "green");
-        end else begin
-          print_colored("TEST FAILED", "red");
-          $display("Expected port: %0d, got: %0d", expected_port, actual_port);
-        end
-
+        $display(""); // przejście do nowej linii
 
         $display("[%0t] Test zakonczony", $time);
 
-        repeat(1000)
+        repeat(10000)
             @(posedge clk);
         $finish();
     end
