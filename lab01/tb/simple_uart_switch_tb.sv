@@ -9,7 +9,7 @@ module simple_uart_switch_tb;
 
     localparam CLK_PERIOD = 10;       // 100 MHz
     localparam CLKS_PER_BIT = 16;
-    localparam BIT_TIME  = CLK_PERIOD * CLKS_PER_BIT; // czas trwania jednego bitu
+
 //------------------------------------------------------------------------------
 // Local variables
 //------------------------------------------------------------------------------
@@ -28,6 +28,8 @@ module simple_uart_switch_tb;
 
     bit sent_bits[$];
     bit capture_done = 0;       // flaga: 1 po zakończeniu akwizycji
+    bit capture_done_sout0 = 0;
+    bit bits_queue_sout0[$]; 
 
 
 //------------------------------------------------------------------------------
@@ -125,20 +127,43 @@ module simple_uart_switch_tb;
 
           // start bit
           sin = start_bit; #(CLK_PERIOD*CLKS_PER_BIT);
+          sent_bits.push_back(start_bit);
           // data bits LSB first
           for (i = 0; i < 8; i++) begin
             sin = data[i];
+            sent_bits.push_back(data[i]);
             #(CLK_PERIOD*CLKS_PER_BIT);
           end
           // parity bit (even parity)
           sin = parity_bit;
+          sent_bits.push_back(parity_bit);
           #(CLK_PERIOD*CLKS_PER_BIT);
           // stop bit
           sin = end_bit;
+          sent_bits.push_back(end_bit);
           #(CLK_PERIOD*CLKS_PER_BIT);
         end
     endtask
 
+    task compere_data(input bits_queue[$], input sent_bits[$]);
+        integer i;
+        static int min_len = 22;
+        automatic int mismatches = 0;
+        begin
+            for (int i = 0; i < min_len; i++) begin
+                if (sent_bits[i] !== bits_queue[i]) begin
+                    $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue[i]);
+                    mismatches++;
+                end
+            end
+    
+            if (mismatches == 0)
+                print_colored("TEST PASSED  pakiet na sout zgodny z sin", "green");
+            else
+                print_colored($sformatf("TEST FAILED  %0d bitów różnicy", mismatches), "red");
+            $write("\n\n");
+        end
+    endtask
 
 
 
@@ -192,16 +217,61 @@ module simple_uart_switch_tb;
 
                   // zakończone próbkowanie
                   capture_done = 1;
-                  $display("[%0t] Akwizycja zakończona, zebrano %0d bitów", $time, bits_queue.size());
+                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue.size());
                   // zakończone próbkowanie  wypisz wynik
 
-                  $display("[%0t] Zebrane bity z sout1 (%0d bitów):", $time, bits_queue.size());
+                  $display("[%0t] Zebrane bity z sout1 (%0d bitow):", $time, bits_queue.size());
                   foreach (bits_queue[i])
                       $write("%0d", bits_queue[i]);
                   $write("\n\n");
               end
       
               sout1_prev = sout1;
+          end
+      end
+
+// ---------------------------
+// Monitor wyjścia sout0
+// ---------------------------
+      bit sout0_prev;
+      int bit_index_sout0;
+
+
+      
+      
+      initial begin
+          sout1_prev = 1'b1; // UART idle
+          bits_queue.delete();
+
+          capture_done_sout0 = 0;
+          forever begin
+              @(posedge clk);
+      
+              // wykrycie start bitu (1 -> 0)
+              if (sout0_prev === 1 && sout0 === 0) begin
+                  $display("[%0t] Start bit wykryty na sout0", $time);
+      
+                  bits_queue_sout0.delete();
+      
+                  // próbkuj po 16 cykli zegara każdy bit
+                  for (bit_index_sout0 = 0; bit_index_sout0 < total_bits; bit_index_sout0++) begin
+                      repeat(sample_count_per_bit) @(posedge clk);
+                      bits_queue_sout0.push_back(sout0);
+                  end
+                  bits_queue_sout0.push_front(0);
+
+                  // zakończone próbkowanie
+                  capture_done_sout0 = 1;
+                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue.size());
+                  // zakończone próbkowanie  wypisz wynik
+
+                  $display("[%0t] Zebrane bity z sout (%0d bitow):", $time, bits_queue.size());
+                  foreach (bits_queue_sout0[i])
+                      $write("%0d", bits_queue_sout0[i]);
+                  $write("\n\n");
+              end
+      
+              sout0_prev = sout0;
           end
       end
 
@@ -213,10 +283,10 @@ module simple_uart_switch_tb;
 
         test_result_t result;
         static logic [7:0] addr = 8'h88;
-        static logic [7:0] data = 8'h99;
+        static logic [7:0] addr_sout0 = 8'h77;
+        static logic [7:0] data = 8'hAA;
   
-        int mismatches = 0;
-        int min_len;
+
  
 
 
@@ -225,49 +295,43 @@ module simple_uart_switch_tb;
 
         $display("[%0t] Start testu port sout1", $time);
 
-        $display("[%0t] Programowanie: addr=0xAB -> port1", $time);
+        $display("[%0t] Programowanie: addr=0x88 -> port1", $time);
         prog = 1;
         capture_done = 0;
 
         send_uart_packet(addr, 8'h01);
         #(10*CLK_PERIOD);
         
+        $display("[%0t] Programowanie: addr=0xAB -> port0", $time);
+
+        send_uart_packet(addr_sout0, 8'h00);
+        #(10*CLK_PERIOD);
+
         sent_bits.delete();
 
         $display("[%0t] Test forwarding", $time);
         prog = 0;
 
         
-        send_uart_packet(addr, data);               // wysyłamy pakiet
-        
+        send_uart_packet(addr, data);               
         wait (capture_done == 1);    
+        compere_data(bits_queue,sent_bits);         
+        sent_bits.delete();
 
-         
-        min_len = 22;
+        send_uart_packet(addr_sout0, data);               
+        wait (capture_done_sout0 == 1);
+        compere_data(bits_queue_sout0,sent_bits);
+        sent_bits.delete();
 
-        for (int i = 0; i < min_len; i++) begin
-            if (sent_bits[i] !== bits_queue[i]) begin
-                $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue[i]);
-                mismatches++;
-            end
-        end
-
-        if (mismatches == 0)
-            print_colored("TEST PASSED  pakiet na sout1 zgodny z sin", "green");
-        else
-            print_colored($sformatf("TEST FAILED  %0d bitów różnicy", mismatches), "red");
+        // uszkodzony bit parzystści w data dla sout0
+        send_uart_byte_test(0,addr_sout0,0,1);
+        send_uart_byte_test(0,data,0,1);               
+        wait (capture_done_sout0 == 1);
+        compere_data(bits_queue_sout0,sent_bits);
+        sent_bits.delete();
+        
 
         $display("[%0t] Test zakonczony", $time);
-
-        //Diagnostyka
-
-        $write("Wyslane bity (sin): ");
-        foreach (sent_bits[i]) $write("%0d", sent_bits[i]);
-        $write("\n");
-
-        $write("Odebrane bity (sout1): ");
-        foreach (bits_queue[i]) $write("%0d", bits_queue[i]);
-        $write("\n");
 
 
 
