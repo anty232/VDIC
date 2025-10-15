@@ -27,10 +27,22 @@ module simple_uart_switch_tb;
 
 
     bit sent_bits[$];
-    bit capture_done = 0;       // flaga: 1 po zakończeniu akwizycji
+    bit capture_done_sout1 = 0;       // flaga: 1 po zakończeniu akwizycji
     bit capture_done_sout0 = 0;
     bit bits_queue_sout0[$]; 
+    bit bits_queue_sout1[$];
 
+//------------------------------------------------------------------------------
+// Routing table for expected forwarding
+//------------------------------------------------------------------------------
+
+    typedef struct {
+        logic [7:0] addr;
+        int port; // 0 = sout0, 1 = sout1
+    } routing_entry_t;
+    
+    routing_entry_t routing_table[$]; // dynamic array
+    
 
 //------------------------------------------------------------------------------
 // Type definitions
@@ -75,6 +87,20 @@ module simple_uart_switch_tb;
         end
     end
 
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+    function int get_expected_port(input logic [7:0] addr);
+        foreach (routing_table[i]) begin
+            if (routing_table[i].addr == addr)
+                return routing_table[i].port;
+        end
+        // jeśli brak wpisu
+        return -1;
+    endfunction
+    
 
 //------------------------------------------------------------------------------
 // Taks
@@ -145,14 +171,14 @@ module simple_uart_switch_tb;
         end
     endtask
 
-    task compere_data(input bits_queue[$], input sent_bits[$]);
+    task compere_data(input bits_queue_sout1[$], input sent_bits[$]);
         integer i;
         static int min_len = 22;
         automatic int mismatches = 0;
         begin
             for (int i = 0; i < min_len; i++) begin
-                if (sent_bits[i] !== bits_queue[i]) begin
-                    $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue[i]);
+                if (sent_bits[i] !== bits_queue_sout1[i]) begin
+                    $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue_sout1[i]);
                     mismatches++;
                 end
             end
@@ -165,7 +191,42 @@ module simple_uart_switch_tb;
         end
     endtask
 
-
+    task add_routing_entry(input logic [7:0] addr, input int port);
+        static int found = 0;
+        foreach (routing_table[i]) begin
+            if (routing_table[i].addr == addr) begin
+                routing_table[i].port = port;
+                found = 1;
+            end
+        end
+        if (!found)
+            routing_table.push_back('{addr, port});
+        $display("[%0t] ROUTE: addr=0x%0h -> port%d zapisano", $time, addr, port);
+    endtask
+    
+    task compare_expected_data(input logic [7:0] addr, input bit sent_bits[$]);
+        int port_exp;
+        begin
+            port_exp = get_expected_port(addr);
+            if (port_exp == -1) begin
+                print_colored($sformatf("Brak wpisu routingu dla addr=0x%0h", addr), "yellow");
+                return;
+            end
+    
+            if (port_exp == 0) begin
+                wait (capture_done_sout0 == 1);
+                compere_data(bits_queue_sout0, sent_bits);
+            end
+            else if (port_exp == 1) begin
+                wait (capture_done_sout1 == 1);
+                compere_data(bits_queue_sout1, sent_bits);
+            end
+            else begin
+                print_colored("Niepoprawny port w tablicy routingu", "red");
+            end
+        end
+    endtask
+    
 
 //------------------------------------------------------------------------------
 // Utility for color printing
@@ -184,11 +245,12 @@ module simple_uart_switch_tb;
         end
       endfunction
 
+
+
 // ---------------------------
 // Monitor wyjścia sout1
 // ---------------------------
       bit sout1_prev;
-      bit bits_queue[$]; // dynamiczna kolejka na zapisane bity
       int bit_index;
       int sample_count_per_bit = 16; // czas trwania jednego bitu w cyklach zegara
       int total_bits = 21;           // liczba bitów do zebrania po starcie
@@ -196,9 +258,9 @@ module simple_uart_switch_tb;
       
       initial begin
           sout1_prev = 1'b1; // UART idle
-          bits_queue.delete();
+          bits_queue_sout1.delete();
 
-          capture_done = 0;
+          capture_done_sout1 = 0;
           forever begin
               @(posedge clk);
       
@@ -206,23 +268,25 @@ module simple_uart_switch_tb;
               if (sout1_prev === 1 && sout1 === 0) begin
                   $display("[%0t] Start bit wykryty na sout1", $time);
       
-                  bits_queue.delete();
+                  bits_queue_sout1.delete();
+
+                  bits_queue_sout1.push_back(sout1);
       
                   // próbkuj po 16 cykli zegara każdy bit
                   for (bit_index = 0; bit_index < total_bits; bit_index++) begin
                       repeat(sample_count_per_bit) @(posedge clk);
-                      bits_queue.push_back(sout1);
+                      bits_queue_sout1.push_back(sout1);
                   end
-                  bits_queue.push_front(0);
+                  
 
                   // zakończone próbkowanie
-                  capture_done = 1;
-                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue.size());
+                  capture_done_sout1 = 1;
+                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue_sout1.size());
                   // zakończone próbkowanie  wypisz wynik
 
-                  $display("[%0t] Zebrane bity z sout1 (%0d bitow):", $time, bits_queue.size());
-                  foreach (bits_queue[i])
-                      $write("%0d", bits_queue[i]);
+                  $display("[%0t] Zebrane bity z sout1 (%0d bitow):", $time, bits_queue_sout1.size());
+                  foreach (bits_queue_sout1[i])
+                      $write("%0d", bits_queue_sout1[i]);
                   $write("\n\n");
               end
       
@@ -230,18 +294,18 @@ module simple_uart_switch_tb;
           end
       end
 
+
+
 // ---------------------------
 // Monitor wyjścia sout0
 // ---------------------------
       bit sout0_prev;
       int bit_index_sout0;
 
-
-      
-      
+   
       initial begin
-          sout1_prev = 1'b1; // UART idle
-          bits_queue.delete();
+          sout0_prev = 1'b1; // UART idle
+          bits_queue_sout0.delete();
 
           capture_done_sout0 = 0;
           forever begin
@@ -252,20 +316,22 @@ module simple_uart_switch_tb;
                   $display("[%0t] Start bit wykryty na sout0", $time);
       
                   bits_queue_sout0.delete();
-      
+
+                  bits_queue_sout0.push_back(sout0);
+
                   // próbkuj po 16 cykli zegara każdy bit
                   for (bit_index_sout0 = 0; bit_index_sout0 < total_bits; bit_index_sout0++) begin
                       repeat(sample_count_per_bit) @(posedge clk);
                       bits_queue_sout0.push_back(sout0);
                   end
-                  bits_queue_sout0.push_front(0);
+                  
 
                   // zakończone próbkowanie
                   capture_done_sout0 = 1;
-                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue.size());
+                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", $time, bits_queue_sout1.size());
                   // zakończone próbkowanie  wypisz wynik
 
-                  $display("[%0t] Zebrane bity z sout (%0d bitow):", $time, bits_queue.size());
+                  $display("[%0t] Zebrane bity z sout (%0d bitow):", $time, bits_queue_sout1.size());
                   foreach (bits_queue_sout0[i])
                       $write("%0d", bits_queue_sout0[i]);
                   $write("\n\n");
@@ -274,6 +340,9 @@ module simple_uart_switch_tb;
               sout0_prev = sout0;
           end
       end
+
+
+
 
 //------------------------------------------------------------------------------
 // Sekwencja testowa
@@ -285,9 +354,7 @@ module simple_uart_switch_tb;
         static logic [7:0] addr = 8'h88;
         static logic [7:0] addr_sout0 = 8'h77;
         static logic [7:0] data = 8'hAA;
-  
-
- 
+        
 
 
         reset_SWITCH();
@@ -295,16 +362,20 @@ module simple_uart_switch_tb;
 
         $display("[%0t] Start testu port sout1", $time);
 
+
+
         $display("[%0t] Programowanie: addr=0x88 -> port1", $time);
         prog = 1;
-        capture_done = 0;
+
 
         send_uart_packet(addr, 8'h01);
+        add_routing_entry(addr, 1);
         #(10*CLK_PERIOD);
         
         $display("[%0t] Programowanie: addr=0xAB -> port0", $time);
 
         send_uart_packet(addr_sout0, 8'h00);
+        add_routing_entry(addr_sout0, 0);
         #(10*CLK_PERIOD);
 
         sent_bits.delete();
@@ -312,22 +383,29 @@ module simple_uart_switch_tb;
         $display("[%0t] Test forwarding", $time);
         prog = 0;
 
-        
+        capture_done_sout1 = 0;
         send_uart_packet(addr, data);               
-        wait (capture_done == 1);    
-        compere_data(bits_queue,sent_bits);         
+        compare_expected_data(addr, sent_bits);
         sent_bits.delete();
 
+
+        capture_done_sout0 = 0;
         send_uart_packet(addr_sout0, data);               
-        wait (capture_done_sout0 == 1);
-        compere_data(bits_queue_sout0,sent_bits);
+        compare_expected_data(addr_sout0, sent_bits);
         sent_bits.delete();
 
         // uszkodzony bit parzystści w data dla sout0
+        capture_done_sout0 = 0;
         send_uart_byte_test(0,addr_sout0,0,1);
         send_uart_byte_test(0,data,0,1);               
-        wait (capture_done_sout0 == 1);
-        compere_data(bits_queue_sout0,sent_bits);
+        compare_expected_data(addr_sout0, sent_bits);
+        sent_bits.delete();
+
+        // uszkodzony start bit
+        capture_done_sout0 = 0;
+        send_uart_byte_test(0,addr_sout0,0,1);
+        send_uart_byte_test(1,data,0,1);               
+        compare_expected_data(addr_sout0, sent_bits);
         sent_bits.delete();
         
 
