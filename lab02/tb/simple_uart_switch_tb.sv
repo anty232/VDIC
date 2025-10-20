@@ -6,13 +6,12 @@ module simple_uart_switch_tb;
     // Local param
     //------------------------------------------------------------------------------
     
-    
         localparam CLK_PERIOD = 10;       // 100 MHz
         localparam CLKS_PER_BIT = 16;
         localparam NUM_ADDRS    = 256;
-        time TIMEOUT_CYCLES = 20000;
         localparam int MONITOR_BITS = 22;
-    
+        localparam int MONITOR_FRAMES = 2;
+        time TIMEOUT_CYCLES = 20000;
     //------------------------------------------------------------------------------
     // Local variables
     //------------------------------------------------------------------------------
@@ -27,13 +26,19 @@ module simple_uart_switch_tb;
     //------------------------------------------------------------------------------
     // Global queque and variables
     //------------------------------------------------------------------------------
-    
-    
-        bit sent_bits[$];
-        bit capture_done_sout1 = 0;       // flaga: 1 po zakończeniu akwizycji
+        typedef struct packed {
+            bit        start_bit;
+            bit [7:0]  data;
+            bit        parity;
+            bit        stop_bit;
+        } uart_frame_t;
+
+        uart_frame_t sent_frames[$];
+        bit capture_done_sout1 = 0;       
         bit capture_done_sout0 = 0;
-        bit bits_queue_sout0[$]; 
-        bit bits_queue_sout1[$];
+        uart_frame_t captured_frames_sout0[$];
+        uart_frame_t captured_frames_sout1[$];
+        
     
     //------------------------------------------------------------------------------
     // Routing table for expected forwarding
@@ -165,28 +170,62 @@ module simple_uart_switch_tb;
             rst_n = 1;
         endtask
     
+        
         task send_uart_byte(input [7:0] data);
             integer i;
             bit parity;
+            uart_frame_t frame;
             begin
               parity = ^data; // even parity → parity bit = parity of data (XOR)
+
+              frame.start_bit = 1'b0;
+              frame.data      = data;
+              frame.parity    = parity;
+              frame.stop_bit  = 1'b1;
+
               // start bit
-              sin = 0; #(CLK_PERIOD*CLKS_PER_BIT);
-              sent_bits.push_back(0);
+              sin = frame.start_bit; #(CLK_PERIOD*CLKS_PER_BIT);
               // data bits LSB first
               for (i = 0; i < 8; i++) begin
-                sin = data[i];
-                sent_bits.push_back(data[i]);
+                sin = frame.data[i];
                 #(CLK_PERIOD*CLKS_PER_BIT);
               end
               // parity bit (even parity)
-              sin = parity;
-              sent_bits.push_back(parity);
+              sin = frame.parity;
               #(CLK_PERIOD*CLKS_PER_BIT);
               // stop bit
-              sin = 1;
-              sent_bits.push_back(1);
+              sin = frame.stop_bit;
               #(CLK_PERIOD*CLKS_PER_BIT);
+
+              sent_frames.push_back(frame);
+            end
+        endtask
+
+        task send_uart_byte_test(input bit start_bit, input [7:0] data, input bit parity_bit, input bit end_bit);
+            integer i;
+            uart_frame_t frame;
+
+            begin
+              frame.start_bit = start_bit;
+              frame.data      = data;
+              frame.parity    = parity_bit;
+              frame.stop_bit  = end_bit;
+
+              // start bit
+              sin = frame.start_bit; #(CLK_PERIOD*CLKS_PER_BIT);
+              // data bits LSB first
+              for (i = 0; i < 8; i++) begin
+                sin = frame.data[i];
+                #(CLK_PERIOD*CLKS_PER_BIT);
+              end
+              // parity bit (even parity)
+              sin = frame.parity;
+              #(CLK_PERIOD*CLKS_PER_BIT);
+              // stop bit
+              sin = frame.stop_bit;
+              #(CLK_PERIOD*CLKS_PER_BIT);
+
+              sent_frames.push_back(frame);
             end
         endtask
     
@@ -197,51 +236,60 @@ module simple_uart_switch_tb;
             end
         endtask
     
-        task send_uart_byte_test(input start_bit, input [7:0] data, input parity_bit, input end_bit);
-            integer i;
-            
-            begin
-    
-              // start bit
-              sin = start_bit; #(CLK_PERIOD*CLKS_PER_BIT);
-              sent_bits.push_back(start_bit);
-              // data bits LSB first
-              for (i = 0; i < 8; i++) begin
-                sin = data[i];
-                sent_bits.push_back(data[i]);
-                #(CLK_PERIOD*CLKS_PER_BIT);
-              end
-              // parity bit (even parity)
-              sin = parity_bit;
-              sent_bits.push_back(parity_bit);
-              #(CLK_PERIOD*CLKS_PER_BIT);
-              // stop bit
-              sin = end_bit;
-              sent_bits.push_back(end_bit);
-              #(CLK_PERIOD*CLKS_PER_BIT);
-            end
-        endtask
-    
-        task compere_data(input bits_queue_sout1[$], input sent_bits[$]);
-            integer i;
-            static int min_len = 22;
+        function string frame_to_string(input uart_frame_t frame);
+            return $sformatf("start=%0b data=0x%02h parity=%0b stop=%0b",
+                             frame.start_bit, frame.data, frame.parity, frame.stop_bit);
+        endfunction
+
+        task compare_frames(input uart_frame_t captured_frames[$], input uart_frame_t expected_frames[$]);
             automatic int mismatches = 0;
+            automatic int diff = 0;
+            int min_len;
             begin
+                min_len = (captured_frames.size() < expected_frames.size())
+                          ? captured_frames.size() : expected_frames.size();
+
+                if (min_len == 0) begin
+                    print_colored("Brak ramek do porownania", "yellow");
+                end
+
                 for (int i = 0; i < min_len; i++) begin
-                    if (sent_bits[i] !== bits_queue_sout1[i]) begin
-                        $display("Bit mismatch at %0d: sent=%0d, recv=%0d", i, sent_bits[i], bits_queue_sout1[i]);
+                    if (captured_frames[i] !== expected_frames[i]) begin
+                        $display("Frame mismatch at index %0d", i);
+                        if (captured_frames[i].start_bit !== expected_frames[i].start_bit)
+                            $display("  start: exp=%0b recv=%0b",
+                                     expected_frames[i].start_bit, captured_frames[i].start_bit);
+                        if (captured_frames[i].data !== expected_frames[i].data)
+                            $display("  data : exp=0x%02h recv=0x%02h",
+                                     expected_frames[i].data, captured_frames[i].data);
+                        if (captured_frames[i].parity !== expected_frames[i].parity)
+                            $display("  parity: exp=%0b recv=%0b",
+                                     expected_frames[i].parity, captured_frames[i].parity);
+                        if (captured_frames[i].stop_bit !== expected_frames[i].stop_bit)
+                            $display("  stop : exp=%0b recv=%0b",
+                                     expected_frames[i].stop_bit, captured_frames[i].stop_bit);
                         mismatches++;
                     end
                 end
-        
+
+                if (captured_frames.size() != expected_frames.size()) begin
+                    diff = (captured_frames.size() > expected_frames.size())
+                               ? (captured_frames.size() - expected_frames.size())
+                               : (expected_frames.size() - captured_frames.size());
+                    mismatches += diff;
+                    print_colored($sformatf("Rozna liczba ramek  recv=%0d exp=%0d",
+                                           captured_frames.size(), expected_frames.size()), "yellow");
+                end
+
                 if (mismatches == 0)
-                    print_colored("TEST PASSED  pakiet na sout zgodny z sin", "green");
+                    print_colored("TEST PASSED  ramki na wyjsciu zgodne z wejsciem", "green");
                 else
-                    print_colored($sformatf("TEST FAILED  %0d bitow roznicy", mismatches), "red");
+                    print_colored($sformatf("TEST FAILED  %0d roznic w ramkach", mismatches), "red");
                 $write("\n\n");
             end
         endtask
-    
+
+     
         task add_routing_entry(input logic [7:0] addr, input logic [7:0] port);
             static int found = 0;
             foreach (routing_table[i]) begin
@@ -254,8 +302,9 @@ module simple_uart_switch_tb;
                 routing_table.push_back('{addr, port});
             $display("[%0t] ROUTE: addr=0x%0h -> port%d zapisano", $time, addr, port);
         endtask
+    
         
-        task compare_expected_data(input logic [7:0] addr, input bit sent_bits[$]);
+        task compare_expected_data(input logic [7:0] addr, input uart_frame_t expected_frames[$]);
             logic [7:0] port_exp;
             begin
                 port_exp = get_expected_port(addr);
@@ -263,14 +312,14 @@ module simple_uart_switch_tb;
                     print_colored($sformatf("Brak wpisu routingu dla addr=0x%0h", addr), "yellow");
                     return;
                 end
-        
+
                 if (port_exp == 0) begin
                     wait (capture_done_sout0 == 1);
-                    compere_data(bits_queue_sout0, sent_bits);
+                    compare_frames(captured_frames_sout0, expected_frames);
                 end
                 else if (port_exp == 1) begin
                     wait (capture_done_sout1 == 1);
-                    compere_data(bits_queue_sout1, sent_bits);
+                    compare_frames(captured_frames_sout1, expected_frames);
                 end
                 else begin
                     print_colored("Niepoprawny port w tablicy routingu", "red");
@@ -282,11 +331,11 @@ module simple_uart_switch_tb;
             input string port_name,
             ref logic serial_line,
             ref bit capture_done,
-            ref bit bits_queue[$],
+            ref uart_frame_t frame_queue[$],
             input time timeout_cycles
         );
-            int bit_index;
             bit prev;
+            longint wait_limit;
     
             forever begin
                 prev = 1'b1;
@@ -299,23 +348,62 @@ module simple_uart_switch_tb;
                                 disable TIMEOUT;
                                 $display("[%0t] Start bit wykryty na %s", $time, port_name);
     
-                                bits_queue.delete();
-                                bits_queue.push_back(serial_line);
+                                frame_queue.delete();
+                                capture_done = 0;
     
-                                for (bit_index = 0; bit_index < MONITOR_BITS; bit_index++) begin
+                                for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+                                    uart_frame_t frame;
+                                    bit start_found = 1'b1;
+    
+                                    if (frame_idx == 0) begin
+                                        frame.start_bit = serial_line;
+                                    end
+                                    else begin
+                                        start_found = 1'b0;
+                                        wait_limit = timeout_cycles;
+                                        while (wait_limit > 0) begin
+                                            bit prev_local = serial_line;
+                                            @(posedge clk);
+                                            wait_limit--;
+                                            if (prev_local === 1 && serial_line === 0) begin
+                                                start_found = 1'b1;
+                                                break;
+                                            end
+                                        end
+    
+                                        if (!start_found) begin
+                                            print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
+                                                                    $time, port_name), "yellow");
+                                            break;
+                                        end
+    
+                                        frame.start_bit = serial_line;
+                                    end
+    
+                                    for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                                        repeat (CLKS_PER_BIT) @(posedge clk);
+                                        frame.data[bit_index] = serial_line;
+                                    end
+    
                                     repeat (CLKS_PER_BIT) @(posedge clk);
-                                    bits_queue.push_back(serial_line);
+                                    frame.parity = serial_line;
+    
+                                    repeat (CLKS_PER_BIT) @(posedge clk);
+                                    frame.stop_bit = serial_line;
+    
+                                    frame_queue.push_back(frame);
                                 end
     
                                 capture_done = 1;
-                                $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow",
-                                         $time, bits_queue.size());
+                                $display("[%0t] Akwizycja zakonczona, zebrano %0d ramek",
+                                         $time, frame_queue.size());
     
-                                $display("[%0t] Zebrane bity z %s (%0d bitow):",
-                                         $time, port_name, bits_queue.size());
-                                foreach (bits_queue[i])
-                                    $write("%0d", bits_queue[i]);
-                                $write("\n\n");
+                                foreach (frame_queue[i])
+                                    $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
+                                if (frame_queue.size() < MONITOR_FRAMES)
+                                    print_colored($sformatf("[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d",
+                                                            $time, MONITOR_FRAMES, frame_queue.size()), "yellow");
+                                $write("\n");
     
                                 disable TIMEOUT;
                                 disable WAIT_START;
@@ -335,16 +423,14 @@ module simple_uart_switch_tb;
             end
         endtask
 
-         
+        initial
+            monitor_uart_output("sout1", sout1, capture_done_sout1, captured_frames_sout1,
+                             TIMEOUT_CYCLES);
 
         initial
-            monitor_uart_output("sout1", sout1, capture_done_sout1, bits_queue_sout1,
-                                 TIMEOUT_CYCLES);
-    
-        initial
-            monitor_uart_output("sout0", sout0, capture_done_sout0, bits_queue_sout0,
-                               TIMEOUT_CYCLES);       
-    
+            monitor_uart_output("sout0", sout0, capture_done_sout0, captured_frames_sout0,
+                               TIMEOUT_CYCLES);
+       
     
     
     
@@ -379,7 +465,8 @@ module simple_uart_switch_tb;
                 #(5*CLK_PERIOD);
             end
 
-            sent_bits.delete();
+            sent_frames.delete();
+
 
             print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
             print_routing_table();
@@ -395,30 +482,34 @@ module simple_uart_switch_tb;
             prog = 0;
     
             capture_done_sout1 = 0;
-            send_uart_packet(addr, data);               
-            compare_expected_data(addr, sent_bits);
-            sent_bits.delete();
-    
-    
+            captured_frames_sout1.delete();
+            send_uart_packet(addr, data);
+            compare_expected_data(addr, sent_frames);
+            sent_frames.delete();
+
+
             capture_done_sout0 = 0;
-            send_uart_packet(addr_sout0, data);               
-            compare_expected_data(addr_sout0, sent_bits);
-            sent_bits.delete();
-    
+            captured_frames_sout0.delete();
+            send_uart_packet(addr_sout0, data);
+            compare_expected_data(addr_sout0, sent_frames);
+            sent_frames.delete();
+
             // uszkodzony bit parzystści w data dla sout0
             capture_done_sout0 = 0;
+            captured_frames_sout0.delete();
             send_uart_byte_test(0,addr_sout0,0,1);
-            send_uart_byte_test(0,data,0,1);               
-            compare_expected_data(addr_sout0, sent_bits);
-            sent_bits.delete();
-    
-            
+            send_uart_byte_test(0,data,0,1);
+            compare_expected_data(addr_sout0, sent_frames);
+            sent_frames.delete();
+
+
             // uszkodzony start bit
             capture_done_sout0 = 0;
-            send_uart_byte_test(1,addr_sout0,0,1);
-            send_uart_byte_test(1,data,0,1);               
-            compare_expected_data(addr_sout0, sent_bits);
-            sent_bits.delete();
+            captured_frames_sout0.delete();
+            send_uart_byte_test(0,addr_sout0,0,1);
+            send_uart_byte_test(0,data,0,1);
+            compare_expected_data(addr_sout0, sent_frames);
+            sent_frames.delete();
             
     
             $display("[%0t] Test zakonczony", $time);
