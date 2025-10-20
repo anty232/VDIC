@@ -11,6 +11,7 @@ module simple_uart_switch_tb;
         localparam CLKS_PER_BIT = 16;
         localparam NUM_ADDRS    = 256;
         time TIMEOUT_CYCLES = 20000;
+        localparam int MONITOR_BITS = 22;
     
     //------------------------------------------------------------------------------
     // Local variables
@@ -134,6 +135,24 @@ module simple_uart_switch_tb;
         endfunction
         
     
+    //------------------------------------------------------------------------------
+    // Utility for color printing
+    //------------------------------------------------------------------------------
+    
+        function void print_colored(input string msg, input string color);
+            string esc;
+            begin
+              case (color)
+                "green": esc = "\033[1;32m";
+                "red"  : esc = "\033[1;31m";
+                "yellow": esc = "\033[1;33m";
+                default: esc = "\033[0m";
+              endcase
+              $display("%s%s\033[0m", esc, msg);
+            end
+          endfunction
+
+
     //------------------------------------------------------------------------------
     // Taks
     //------------------------------------------------------------------------------
@@ -259,163 +278,72 @@ module simple_uart_switch_tb;
             end
         endtask
         
+        task automatic monitor_uart_output(
+            input string port_name,
+            ref logic serial_line,
+            ref bit capture_done,
+            ref bit bits_queue[$],
+            input time timeout_cycles
+        );
+            int bit_index;
+            bit prev;
     
-    //------------------------------------------------------------------------------
-    // Utility for color printing
-    //------------------------------------------------------------------------------
+            forever begin
+                prev = 1'b1;
     
-          function void print_colored(input string msg, input string color);
-            string esc;
-            begin
-              case (color)
-                "green": esc = "\033[1;32m";
-                "red"  : esc = "\033[1;31m";
-                "yellow": esc = "\033[1;33m";
-                default: esc = "\033[0m";
-              endcase
-              $display("%s%s\033[0m", esc, msg);
+                fork
+                    begin : WAIT_START
+                        forever begin
+                            @(posedge clk);
+                            if (prev === 1 && serial_line === 0) begin
+                                disable TIMEOUT;
+                                $display("[%0t] Start bit wykryty na %s", $time, port_name);
+    
+                                bits_queue.delete();
+                                bits_queue.push_back(serial_line);
+    
+                                for (bit_index = 0; bit_index < MONITOR_BITS; bit_index++) begin
+                                    repeat (CLKS_PER_BIT) @(posedge clk);
+                                    bits_queue.push_back(serial_line);
+                                end
+    
+                                capture_done = 1;
+                                $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow",
+                                         $time, bits_queue.size());
+    
+                                $display("[%0t] Zebrane bity z %s (%0d bitow):",
+                                         $time, port_name, bits_queue.size());
+                                foreach (bits_queue[i])
+                                    $write("%0d", bits_queue[i]);
+                                $write("\n\n");
+    
+                                disable TIMEOUT;
+                                disable WAIT_START;
+                            end
+                            prev = serial_line;
+                        end
+                    end
+    
+                    begin : TIMEOUT
+                        repeat (timeout_cycles) @(posedge clk);
+                        capture_done = 1;
+                        print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
+                                                $time, port_name, timeout_cycles), "yellow");
+                        disable WAIT_START;
+                    end
+                join
             end
-          endfunction
+        endtask
+
+         
+
+        initial
+            monitor_uart_output("sout1", sout1, capture_done_sout1, bits_queue_sout1,
+                                 TIMEOUT_CYCLES);
     
-    
-    
-    // ---------------------------
-    // Monitor wyjścia sout1 
-    // ---------------------------
-          bit sout1_prev;
-          int bit_index_sout1;
-          time TIMEOUT_CYCLES_SOUT1 = 20000; // liczba cykli zegara do timeoutu
-          
-          initial begin
-              sout1_prev = 1'b1; // UART idle
-              bits_queue_sout1.delete();
-              capture_done_sout1 = 0;
-          
-              forever begin
-                  time start_time;
-                  automatic bit timeout_triggered = 0;
-          
-                  @(posedge clk);
-                  start_time = $time;
-          
-                  // czekaj na start bit (1 -> 0), ale z ograniczeniem czasowym
-                  fork
-                      // --- Wątek główny: wykrywanie start bitu ---
-                      begin : WAIT_START_SOUT1
-                          forever begin
-                              @(posedge clk);
-                              if (sout1_prev === 1 && sout1 === 0) begin
-                                  disable TIMEOUT_SOUT1;
-                                  $display("[%0t] Start bit wykryty na sout1", $time);
-          
-                                  bits_queue_sout1.delete();
-                                  bits_queue_sout1.push_back(sout1);
-          
-                                  // próbkuj po 16 cykli zegara każdy bit
-                                  for (bit_index_sout1 = 0; bit_index_sout1 < 22; bit_index_sout1++) begin
-                                      repeat (CLKS_PER_BIT) @(posedge clk);
-                                      bits_queue_sout1.push_back(sout1);
-                                  end
-          
-                                  capture_done_sout1 = 1;
-                                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", 
-                                           $time, bits_queue_sout1.size());
-          
-                                  $display("[%0t] Zebrane bity z sout1 (%0d bitow):", 
-                                           $time, bits_queue_sout1.size());
-                                  foreach (bits_queue_sout1[i])
-                                      $write("%0d", bits_queue_sout1[i]);
-                                  $write("\n\n");
-          
-                                  disable TIMEOUT_SOUT1;
-                                  disable WAIT_START_SOUT1;
-                              end
-                              sout1_prev = sout1;
-                          end
-                      end
-          
-                      // --- Wątek timeoutu ---
-                      begin : TIMEOUT_SOUT1
-                          repeat (TIMEOUT_CYCLES_SOUT1) @(posedge clk);
-                          timeout_triggered = 1;
-                          capture_done_sout1 = 1; // zakończ oczekiwanie, żeby test nie wisiał
-                          print_colored($sformatf("[%0t] Timeout na sout1  brak start bitu w ciagu %0d cykli",
-                                                  $time, TIMEOUT_CYCLES_SOUT1), "yellow");
-                          disable WAIT_START_SOUT1;
-                      end
-                  join
-              end
-          end
-          
-    
-    
-    
-    // ---------------------------
-    // Monitor wyjścia sout0 
-    // ---------------------------
-          bit sout0_prev;
-          int bit_index_sout0;
-     
-          
-          initial begin
-              sout0_prev = 1'b1; // UART idle
-              bits_queue_sout0.delete();
-              capture_done_sout0 = 0;
-          
-              forever begin
-                  time start_time;
-                  automatic bit timeout_triggered = 0;
-          
-                  @(posedge clk);
-                  start_time = $time;
-          
-                  // czekaj na start bit (1->0) z ograniczeniem czasowym
-                  fork
-                      begin : WAIT_START
-                          forever begin
-                              @(posedge clk);
-                              if (sout0_prev === 1 && sout0 === 0) begin
-                                  disable TIMEOUT; // anuluj timeout
-                                  $display("[%0t] Start bit wykryty na sout0", $time);
-          
-                                  bits_queue_sout0.delete();
-                                  bits_queue_sout0.push_back(sout0);
-          
-                                  // próbkuj po 16 cykli zegara każdy bit
-                                  for (bit_index_sout0 = 0; bit_index_sout0 < 22; bit_index_sout0++) begin
-                                      repeat(CLKS_PER_BIT) @(posedge clk);
-                                      bits_queue_sout0.push_back(sout0);
-                                  end
-          
-                                  capture_done_sout0 = 1;
-                                  $display("[%0t] Akwizycja zakonczona, zebrano %0d bitow", 
-                                           $time, bits_queue_sout0.size());
-          
-                                  $display("[%0t] Zebrane bity z sout0 (%0d bitow):", 
-                                           $time, bits_queue_sout0.size());
-                                  foreach (bits_queue_sout0[i])
-                                      $write("%0d", bits_queue_sout0[i]);
-                                  $write("\n\n");
-          
-                                  disable TIMEOUT;
-                                  disable WAIT_START;
-                              end
-                              sout0_prev = sout0;
-                          end
-                      end
-          
-                      begin : TIMEOUT
-                          repeat (TIMEOUT_CYCLES) @(posedge clk);
-                          timeout_triggered = 1;
-                          capture_done_sout0 = 1; // zakończ czekanie, żeby test nie wisiał
-                          print_colored($sformatf("[%0t] Timeout na sout0  brak start bitu w ciagu %0d cykli",
-                                                  $time, TIMEOUT_CYCLES), "yellow");
-                          disable WAIT_START;
-                      end
-                  join
-              end
-          end
-          
+        initial
+            monitor_uart_output("sout0", sout0, capture_done_sout0, bits_queue_sout0,
+                               TIMEOUT_CYCLES);       
     
     
     
@@ -450,26 +378,14 @@ module simple_uart_switch_tb;
                 add_routing_entry(addr, port);
                 #(5*CLK_PERIOD);
             end
-    
+
+            sent_bits.delete();
+
             print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
             print_routing_table();
-            /*
-            $display("[%0t] Programowanie: addr=0x88 -> port1", $time);
-            prog = 1;
+
     
-    
-            send_uart_packet(addr, 8'h01);
-            add_routing_entry(addr, 1);
-            #(10*CLK_PERIOD);
-            
-            $display("[%0t] Programowanie: addr=0xAB -> port0", $time);
-    
-            send_uart_packet(addr_sout0, 8'h00);
-            add_routing_entry(addr_sout0, 0);
-            #(10*CLK_PERIOD);
-            */
-    
-            sent_bits.delete();
+
     
             $write ("---------------------------------------------\n");
             $write ("----------- Faza testowa --------------------\n");
@@ -499,7 +415,7 @@ module simple_uart_switch_tb;
             
             // uszkodzony start bit
             capture_done_sout0 = 0;
-            send_uart_byte_test(0,addr_sout0,0,1);
+            send_uart_byte_test(1,addr_sout0,0,1);
             send_uart_byte_test(1,data,0,1);               
             compare_expected_data(addr_sout0, sent_bits);
             sent_bits.delete();
