@@ -241,6 +241,81 @@ module simple_uart_switch_tb;
                              frame.start_bit, frame.data, frame.parity, frame.stop_bit);
         endfunction
 
+        task program_all_addresses();
+            begin
+                print_colored("Start programowania wszystkich tras", "yellow");
+                routing_table.delete();
+                prog = 1;
+                sin  = 1;
+                for (int i = 0; i < NUM_ADDRS; i++) begin
+                    automatic logic [7:0] addr_local = i[7:0];
+                    automatic logic [7:0] port_local = (i < NUM_ADDRS/2) ? 8'h00 : 8'h01;
+                    send_uart_packet(addr_local, port_local);
+                    add_routing_entry(addr_local, port_local);
+                    #(5*CLK_PERIOD);
+                end
+                print_colored("Programowanie tras zakonczone", "yellow");
+            end
+        endtask
+
+        task run_full_forwarding_sweep();
+            begin
+                print_colored("Start pelnego testu forwarding dla kazdego adresu i danej", "yellow");
+                for (int addr_idx = 0; addr_idx < NUM_ADDRS; addr_idx++) begin
+                    automatic logic [7:0] addr_local = addr_idx[7:0];
+                    $display("[%0t] Forwarding sweep  addr=0x%0h", $time, addr_local);
+                    for (int data_idx = 0; data_idx < 256; data_idx++) begin
+                        automatic logic [7:0] data_local = data_idx[7:0];
+                        run_uart_packet_case("Forwarding sweep", addr_local, data_local, 0);
+                    end
+                end
+                print_colored("Pelny test forwarding zakonczony", "yellow");
+            end
+        endtask
+
+        task apply_async_reset(input string reason);
+            begin
+                $display("[%0t] ASYNC RESET start  %s", $time, reason);
+                #(CLK_PERIOD/4);
+                rst_n = 0;
+                #(3*CLK_PERIOD);
+                @(posedge clk);
+                rst_n = 1;
+                @(posedge clk);
+                $display("[%0t] ASYNC RESET koniec  %s", $time, reason);
+            end
+        endtask
+
+        task run_async_reset_case(
+            input string test_name,
+            input logic [7:0] addr,
+            input logic [7:0] data
+        );
+            int port;
+            begin
+                prepare_capture_for_addr(addr, test_name, port);
+                if (port == -1)
+                    return;
+
+                sent_frames.delete();
+                $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
+                         $time, test_name, addr, data, port);
+
+                fork
+                    begin
+                        send_uart_packet(addr, data);
+                    end
+                    begin
+                        #(CLKS_PER_BIT*CLK_PERIOD*5);
+                        apply_async_reset({test_name, " (async)"});
+                    end
+                join
+
+                expect_no_frames(addr, test_name, port);
+                sent_frames.delete();
+            end
+        endtask
+
         task prepare_capture_for_addr(
             input logic [7:0] addr,
             input string test_name,
@@ -276,10 +351,12 @@ module simple_uart_switch_tb;
             end
         endtask
 
+
         task run_uart_packet_case(
             input string test_name,
             input logic [7:0] addr,
-            input logic [7:0] data
+            input logic [7:0] data,
+            input bit verbose = 1
         );
             int port;
             begin
@@ -288,10 +365,12 @@ module simple_uart_switch_tb;
                     return;
 
                 sent_frames.delete();
-                $display(
-                    "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
-                    $time, test_name, addr, data, port
-                );
+                if (verbose) begin
+                    $display(
+                        "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
+                        $time, test_name, addr, data, port
+                    );
+                end
 
                 send_uart_packet(addr, data);
                 compare_expected_data(addr, sent_frames);
@@ -308,23 +387,27 @@ module simple_uart_switch_tb;
             input bit addr_parity_bit = ^addr,
             input bit data_parity_bit = ^data,
             input bit addr_stop_bit = 1,
-            input bit data_stop_bit = 1
+            input bit data_stop_bit = 1,
+            input bit expect_no_output = 0
         );
             int port;
             begin
                 prepare_capture_for_addr(addr, test_name, port);
                 if (port == -1)
                     return;
-
+    
                 sent_frames.delete();
                 $display(
                     "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
                     $time, test_name, addr, data, port
                 );
-
+    
                 send_uart_byte_test(addr_start_bit, addr, addr_parity_bit, addr_stop_bit);
                 send_uart_byte_test(data_start_bit, data, data_parity_bit, data_stop_bit);
-                compare_expected_data(addr, sent_frames);
+                if (expect_no_output)
+                    expect_no_frames(addr, test_name, port);
+                else
+                    compare_expected_data(addr, sent_frames);
                 sent_frames.delete();
             end
         endtask
@@ -413,6 +496,54 @@ module simple_uart_switch_tb;
                 else begin
                     print_colored("Niepoprawny port w tablicy routingu", "red");
                 end
+            end
+        endtask
+
+        task expect_no_frames(
+            input logic [7:0] addr,
+            input string test_name,
+            input int port
+        );
+            uart_frame_t frames_to_report[$];
+            begin
+                case (port)
+                    0: begin
+                        wait (capture_done_sout0 == 1);
+                        frames_to_report = captured_frames_sout0;
+                    end
+                    1: begin
+                        wait (capture_done_sout1 == 1);
+                        frames_to_report = captured_frames_sout1;
+                    end
+                    default: begin
+                        print_colored($sformatf(
+                            "[%0t] %s  niepoprawny port=%0d w expect_no_frames",
+                            $time, test_name, port
+                        ), "red");
+                        return;
+                    end
+                endcase
+    
+                if (frames_to_report.size() == 0) begin
+                    print_colored($sformatf(
+                        "TEST PASSED  ramka dla addr=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
+                        addr,
+                        port == 0 ? "sout0" : "sout1"
+                    ), "green");
+                end
+                else begin
+                    print_colored($sformatf(
+                        "TEST FAILED  addr=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
+                        addr,
+                        frames_to_report.size(),
+                        port == 0 ? "sout0" : "sout1"
+                    ), "red");
+                    foreach (frames_to_report[i])
+                        $display("    Frame %0d: %s", i, frame_to_string(frames_to_report[i]));
+                    $write("\n");
+                end
+    
+                $write("\n");
             end
         endtask
 
@@ -547,14 +678,7 @@ module simple_uart_switch_tb;
             $write ("----------- Programowanie adresow -----------\n");
             $write ("---------------------------------------------\n");
     
-            // --- Programowanie wszystkich 128 adresów ---
-            for (int i = 0; i < NUM_ADDRS; i++) begin
-                automatic logic [7:0] addr = i[7:0];
-                automatic logic [7:0]  port = (i < NUM_ADDRS/2) ? 0 : 1; // połowa do sout0, reszta do sout1
-                send_uart_packet(addr, port);
-                add_routing_entry(addr, port);
-                #(5*CLK_PERIOD);
-            end
+            program_all_addresses();
 
             sent_frames.delete();
 
@@ -578,22 +702,34 @@ module simple_uart_switch_tb;
 
             run_uart_packet_case("Forwarding do sout0", addr_sout0, data);
 
+            run_full_forwarding_sweep();
+
             // uszkodzony bit parzystści w data dla sout0
             run_uart_manual_case(
                 "Bledny bit parzystosci danych na sout0",
                 addr_sout0,
                 data,
-                .data_parity_bit(~(^data))
+                .data_parity_bit(~(^data)),
+                .expect_no_output(1)
             );
 
             // uszkodzony start bit
             run_uart_manual_case(
-                "Bledny start bit danych na sout0",
-                addr_sout0,
+                "Bledny start bit danych na sout1",
+                addr,
                 data,
-                .data_start_bit(1)
+                .data_start_bit(1),
+                .expect_no_output(1)
             );
-                
+            
+            run_async_reset_case(
+                "Async reset podczas forwarding na sout0",
+                addr_sout0,
+                data
+            );
+
+
+
     
             $display("[%0t] Test zakonczony", $time);
     
