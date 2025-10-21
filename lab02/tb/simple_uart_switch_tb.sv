@@ -69,6 +69,53 @@ module simple_uart_switch_tb;
             COLOR_BLUE_ON_WHITE,
             COLOR_DEFAULT
         } print_color_t;
+
+    //------------------------------------------------------------------------------
+    // Coverage
+    //------------------------------------------------------------------------------
+
+        covergroup forwarding_cov with function sample(
+            logic [7:0] addr,
+            logic [7:0] data,
+            int port
+        );
+            option.name = "cg_forwarding";
+
+            addr_cp : coverpoint addr {
+                bins all_addr[] = {[0:255]};
+            }
+
+            data_cp : coverpoint data {
+                bins all_data[] = {[0:255]};
+            }
+
+            port_cp : coverpoint port {
+                bins sout0 = {0};
+                bins sout1 = {1};
+            }
+
+            addr_by_port : cross addr_cp, port_cp;
+            data_by_port : cross data_cp, port_cp;
+            addr_by_data : cross addr_cp, data_cp;
+        endgroup
+
+        covergroup async_reset_cov with function sample(int port);
+            option.name = "cg_async_reset";
+
+            port_cp : coverpoint port {
+                bins sout0 = {0};
+                bins sout1 = {1};
+            }
+        endgroup
+
+        forwarding_cov fwd_cov;
+        async_reset_cov rst_cov;
+
+        initial begin
+            fwd_cov = new();
+            rst_cov = new();
+        end
+
         
     //------------------------------------------------------------------------------
     // DUT instantiation
@@ -732,7 +779,8 @@ module simple_uart_switch_tb;
 
     
             $display("[%0t] Test zakonczony", $time);
-    
+            
+            print_colored($sformatf("Pokrycie laczne: %.2f%%", $get_coverage()), "yellow");
     
     
             repeat(10000)
