@@ -45,7 +45,7 @@ module simple_uart_switch_tb;
     //------------------------------------------------------------------------------
     
         typedef struct {
-            logic [7:0] addr;
+            logic [7:0] addr_sout1;
             logic [7:0] port; // 0 = sout0, 1 = sout1
         } routing_entry_t;
         
@@ -70,47 +70,49 @@ module simple_uart_switch_tb;
             COLOR_DEFAULT
         } print_color_t;
 
-    //------------------------------------------------------------------------------
-    // Coverage
-    //------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
+// Coverage
+//------------------------------------------------------------------------------
 
-        covergroup forwarding_cov with function sample(
-            logic [7:0] addr,
-            logic [7:0] data,
-            int port
-        );
+        logic [7:0] cov_addr;
+        logic [7:0] cov_data;
+        int cov_port;
+    
+        covergroup forwarding_cov with function sample();
             option.name = "cg_forwarding";
-
-            addr_cp : coverpoint addr {
+    
+            addr_cp : coverpoint cov_addr {
                 bins all_addr[] = {[0:255]};
             }
-
-            data_cp : coverpoint data {
+    
+            data_cp : coverpoint cov_data {
                 bins all_data[] = {[0:255]};
             }
-
-            port_cp : coverpoint port {
+    
+            port_cp : coverpoint cov_port {
                 bins sout0 = {0};
                 bins sout1 = {1};
             }
-
+    
             addr_by_port : cross addr_cp, port_cp;
             data_by_port : cross data_cp, port_cp;
             addr_by_data : cross addr_cp, data_cp;
         endgroup
-
-        covergroup async_reset_cov with function sample(int port);
+    
+        int cov_rst_port;
+    
+        covergroup async_reset_cov with function sample();
             option.name = "cg_async_reset";
-
-            port_cp : coverpoint port {
+    
+            port_cp : coverpoint cov_rst_port {
                 bins sout0 = {0};
                 bins sout1 = {1};
             }
         endgroup
-
+    
         forwarding_cov fwd_cov;
         async_reset_cov rst_cov;
-
+    
         initial begin
             fwd_cov = new();
             rst_cov = new();
@@ -147,9 +149,9 @@ module simple_uart_switch_tb;
     // Functions
     //------------------------------------------------------------------------------
     
-        function logic [7:0] get_expected_port(input logic [7:0] addr);
+        function logic [7:0] get_expected_port(input logic [7:0] addr_sout1);
             foreach (routing_table[i]) begin
-                if (routing_table[i].addr == addr)
+                if (routing_table[i].addr_sout1 == addr_sout1)
                     return routing_table[i].port;
             end
             // jeśli brak wpisu
@@ -180,7 +182,7 @@ module simple_uart_switch_tb;
                     port_str = {esc_yellow, "???", esc_reset};
         
                 $display("  %3d   |  0x%02h    |  %s",
-                         i, routing_table[i].addr, port_str);
+                         i, routing_table[i].addr_sout1, port_str);
             end
         
             $display("%s==============================%s\n", esc_yellow, esc_reset);
@@ -310,7 +312,7 @@ module simple_uart_switch_tb;
                 print_colored("Start pelnego testu forwarding dla kazdego adresu i danej", "yellow");
                 for (int addr_idx = 0; addr_idx < NUM_ADDRS; addr_idx++) begin
                     automatic logic [7:0] addr_local = addr_idx[7:0];
-                    $display("[%0t] Forwarding sweep  addr=0x%0h", $time, addr_local);
+                    $display("[%0t] Forwarding sweep  addr_sout1=0x%0h", $time, addr_local);
                     for (int data_idx = 0; data_idx < 256; data_idx++) begin
                         automatic logic [7:0] data_local = data_idx[7:0];
                         run_uart_packet_case("Forwarding sweep", addr_local, data_local, 0);
@@ -335,45 +337,49 @@ module simple_uart_switch_tb;
 
         task run_async_reset_case(
             input string test_name,
-            input logic [7:0] addr,
+            input logic [7:0] addr_sout1,
             input logic [7:0] data
         );
             int port;
             begin
-                prepare_capture_for_addr(addr, test_name, port);
+                prepare_capture_for_addr(addr_sout1, test_name, port);
                 if (port == -1)
                     return;
-
+    
                 sent_frames.delete();
-                $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
-                         $time, test_name, addr, data, port);
-
+                $display("[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
+                         $time, test_name, addr_sout1, data, port);
+    
                 fork
                     begin
-                        send_uart_packet(addr, data);
+                        send_uart_packet(addr_sout1, data);
                     end
                     begin
                         #(CLKS_PER_BIT*CLK_PERIOD*5);
                         apply_async_reset({test_name, " (async)"});
                     end
                 join
-
-                expect_no_frames(addr, test_name, port);
+    
+                expect_no_frames(addr_sout1, test_name, port);
+                if (rst_cov != null) begin
+                    cov_rst_port = port;
+                    rst_cov.sample();
+                end
                 sent_frames.delete();
             end
         endtask
 
         task prepare_capture_for_addr(
-            input logic [7:0] addr,
+            input logic [7:0] addr_sout1,
             input string test_name,
             output int port
         );
             begin
-                port = get_expected_port(addr);
+                port = get_expected_port(addr_sout1);
                 if (port == -1) begin
                     print_colored($sformatf(
-                        "[%0t] %s  brak wpisu routingu dla addr=0x%0h",
-                        $time, test_name, addr
+                        "[%0t] %s  brak wpisu routingu dla addr_sout1=0x%0h",
+                        $time, test_name, addr_sout1
                     ), "yellow");
                     return;
                 end
@@ -401,37 +407,43 @@ module simple_uart_switch_tb;
 
         task run_uart_packet_case(
             input string test_name,
-            input logic [7:0] addr,
+            input logic [7:0] addr_sout1,
             input logic [7:0] data,
             input bit verbose = 1
         );
             int port;
             begin
-                prepare_capture_for_addr(addr, test_name, port);
+                prepare_capture_for_addr(addr_sout1, test_name, port);
                 if (port == -1)
                     return;
 
                 sent_frames.delete();
                 if (verbose) begin
                     $display(
-                        "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
-                        $time, test_name, addr, data, port
+                        "[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
+                        $time, test_name, addr_sout1, data, port
                     );
                 end
 
-                send_uart_packet(addr, data);
-                compare_expected_data(addr, sent_frames);
+                send_uart_packet(addr_sout1, data);
+                compare_expected_data(addr_sout1, sent_frames);
+                if (fwd_cov != null) begin
+                    cov_addr = addr_sout1;
+                    cov_data = data;
+                    cov_port = port;
+                    fwd_cov.sample();
+                end
                 sent_frames.delete();
             end
         endtask
 
         task run_uart_manual_case(
             input string test_name,
-            input logic [7:0] addr,
+            input logic [7:0] addr_sout1,
             input logic [7:0] data,
             input bit addr_start_bit = 0,
             input bit data_start_bit = 0,
-            input bit addr_parity_bit = ^addr,
+            input bit addr_parity_bit = ^addr_sout1,
             input bit data_parity_bit = ^data,
             input bit addr_stop_bit = 1,
             input bit data_stop_bit = 1,
@@ -439,22 +451,29 @@ module simple_uart_switch_tb;
         );
             int port;
             begin
-                prepare_capture_for_addr(addr, test_name, port);
+                prepare_capture_for_addr(addr_sout1, test_name, port);
                 if (port == -1)
                     return;
     
                 sent_frames.delete();
                 $display(
-                    "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
-                    $time, test_name, addr, data, port
+                    "[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
+                    $time, test_name, addr_sout1, data, port
                 );
     
-                send_uart_byte_test(addr_start_bit, addr, addr_parity_bit, addr_stop_bit);
+                send_uart_byte_test(addr_start_bit, addr_sout1, addr_parity_bit, addr_stop_bit);
                 send_uart_byte_test(data_start_bit, data, data_parity_bit, data_stop_bit);
                 if (expect_no_output)
-                    expect_no_frames(addr, test_name, port);
-                else
-                    compare_expected_data(addr, sent_frames);
+                    expect_no_frames(addr_sout1, test_name, port);
+                else begin
+                    compare_expected_data(addr_sout1, sent_frames);
+                    if (fwd_cov != null) begin
+                        cov_addr = addr_sout1;
+                        cov_data = data;
+                        cov_port = port;
+                        fwd_cov.sample();
+                    end
+                end
                 sent_frames.delete();
             end
         endtask
@@ -509,26 +528,26 @@ module simple_uart_switch_tb;
 
         
 
-        task add_routing_entry(input logic [7:0] addr, input logic [7:0] port);
+        task add_routing_entry(input logic [7:0] addr_sout1, input logic [7:0] port);
             static int found = 0;
             foreach (routing_table[i]) begin
-                if (routing_table[i].addr == addr) begin
+                if (routing_table[i].addr_sout1 == addr_sout1) begin
                     routing_table[i].port = port;
                     found = 1;
                 end
             end
             if (!found)
-                routing_table.push_back('{addr, port});
-            $display("[%0t] ROUTE: addr=0x%0h -> port%d zapisano", $time, addr, port);
+                routing_table.push_back('{addr_sout1, port});
+            $display("[%0t] ROUTE: addr_sout1=0x%0h -> port%d zapisano", $time, addr_sout1, port);
         endtask
     
         
-        task compare_expected_data(input logic [7:0] addr, input uart_frame_t expected_frames[$]);
+        task compare_expected_data(input logic [7:0] addr_sout1, input uart_frame_t expected_frames[$]);
             logic [7:0] port_exp;
             begin
-                port_exp = get_expected_port(addr);
+                port_exp = get_expected_port(addr_sout1);
                 if (port_exp == -1) begin
-                    print_colored($sformatf("Brak wpisu routingu dla addr=0x%0h", addr), "yellow");
+                    print_colored($sformatf("Brak wpisu routingu dla addr_sout1=0x%0h", addr_sout1), "yellow");
                     return;
                 end
 
@@ -547,7 +566,7 @@ module simple_uart_switch_tb;
         endtask
 
         task expect_no_frames(
-            input logic [7:0] addr,
+            input logic [7:0] addr_sout1,
             input string test_name,
             input int port
         );
@@ -573,15 +592,15 @@ module simple_uart_switch_tb;
     
                 if (frames_to_report.size() == 0) begin
                     print_colored($sformatf(
-                        "TEST PASSED  ramka dla addr=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
-                        addr,
+                        "TEST PASSED  ramka dla addr_sout1=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
+                        addr_sout1,
                         port == 0 ? "sout0" : "sout1"
                     ), "green");
                 end
                 else begin
                     print_colored($sformatf(
-                        "TEST FAILED  addr=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
-                        addr,
+                        "TEST FAILED  addr_sout1=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
+                        addr_sout1,
                         frames_to_report.size(),
                         port == 0 ? "sout0" : "sout1"
                     ), "red");
@@ -710,8 +729,8 @@ module simple_uart_switch_tb;
         initial begin
     
             test_result_t result;
-            static logic [7:0] addr = 8'h88;
-            static logic [7:0] addr_sout0 = 8'h77;
+            static logic [7:0] addr_sout1 = 8'hFA;
+            static logic [7:0] addr_sout0 = 8'h11;
             static logic [7:0] data = 8'hAA;
             
     
@@ -745,7 +764,7 @@ module simple_uart_switch_tb;
     
             
 
-            run_uart_packet_case("Forwarding do sout1", addr, data);
+            run_uart_packet_case("Forwarding do sout1", addr_sout1, data);
 
             run_uart_packet_case("Forwarding do sout0", addr_sout0, data);
 
@@ -760,18 +779,60 @@ module simple_uart_switch_tb;
                 .expect_no_output(1)
             );
 
-            // uszkodzony start bit
+            // uszkodzony bit parzystści w data dla sout1
+            run_uart_manual_case(
+                "Bledny bit parzystosci danych na sout1",
+                addr_sout1,
+                data,
+                .data_parity_bit(~(^data)),
+                .expect_no_output(1)
+            );
+
+            // uszkodzony start bit na sout1
             run_uart_manual_case(
                 "Bledny start bit danych na sout1",
-                addr,
+                addr_sout1,
+                data,
+                .data_start_bit(1),
+                .expect_no_output(1)
+            );
+
+            // uszkodzony start bit na sout0
+            run_uart_manual_case(
+                "Bledny start bit danych na sout0",
+                addr_sout0,
                 data,
                 .data_start_bit(1),
                 .expect_no_output(1)
             );
             
+            // uszkodzony stop bit na sout1
+            run_uart_manual_case(
+                "Bledny start bit danych na sout1",
+                addr_sout1,
+                data,
+                .data_stop_bit(0),
+                .expect_no_output(1)
+            );
+
+            // uszkodzony stop bit na sout0
+            run_uart_manual_case(
+                "Bledny start bit danych na sout0",
+                addr_sout0,
+                data,
+                .data_stop_bit(0),
+                .expect_no_output(1)
+            );
+
             run_async_reset_case(
                 "Async reset podczas forwarding na sout0",
                 addr_sout0,
+                data
+            );
+
+            run_async_reset_case(
+                "Async reset podczas forwarding na sout1",
+                addr_sout1,
                 data
             );
 
@@ -779,7 +840,7 @@ module simple_uart_switch_tb;
 
     
             $display("[%0t] Test zakonczony", $time);
-            
+
             print_colored($sformatf("Pokrycie laczne: %.2f%%", $get_coverage()), "yellow");
     
     
