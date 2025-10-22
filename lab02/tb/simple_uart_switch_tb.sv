@@ -9,7 +9,6 @@ module simple_uart_switch_tb;
         localparam CLK_PERIOD = 10;       // 100 MHz
         localparam CLKS_PER_BIT = 16;
         localparam NUM_ADDRS    = 256;
-        localparam int MONITOR_BITS = 22;
         localparam int MONITOR_FRAMES = 2;
         time TIMEOUT_CYCLES = 20000;
     //------------------------------------------------------------------------------
@@ -32,6 +31,18 @@ module simple_uart_switch_tb;
             bit        parity;
             bit        stop_bit;
         } uart_frame_t;
+
+        typedef enum int {
+            FRAME_KIND_ADDR,
+            FRAME_KIND_DATA
+        } frame_kind_t;
+    
+        typedef enum int {
+            ERR_NONE,
+            ERR_START_BIT,
+            ERR_PARITY_BIT,
+            ERR_STOP_BIT
+        } frame_error_t;
 
         uart_frame_t sent_frames[$];
         bit capture_done_sout1 = 0;       
@@ -77,6 +88,8 @@ module simple_uart_switch_tb;
         logic [7:0] cov_addr;
         logic [7:0] cov_data;
         int cov_port;
+        frame_kind_t cov_err_frame_kind;
+        frame_error_t cov_err_error_type;
     
         covergroup forwarding_cov with function sample();
             option.name = "cg_forwarding";
@@ -109,13 +122,32 @@ module simple_uart_switch_tb;
                 bins sout1 = {1};
             }
         endgroup
+
+        covergroup error_frame_cov with function sample();
+            option.name = "cg_error_frames";
+    
+            frame_kind_cp : coverpoint cov_err_frame_kind {
+                bins addr = {FRAME_KIND_ADDR};
+                bins data = {FRAME_KIND_DATA};
+            }
+    
+            error_type_cp : coverpoint cov_err_error_type {
+                bins start_bit  = {ERR_START_BIT};
+                bins parity_bit = {ERR_PARITY_BIT};
+                bins stop_bit   = {ERR_STOP_BIT};
+            }
+    
+            frame_error_cross : cross frame_kind_cp, error_type_cp;
+        endgroup
     
         forwarding_cov fwd_cov;
         async_reset_cov rst_cov;
+        error_frame_cov err_cov;
     
         initial begin
             fwd_cov = new();
             rst_cov = new();
+            err_cov = new();
         end
 
         
@@ -157,6 +189,15 @@ module simple_uart_switch_tb;
             // jeśli brak wpisu
             return -1;
         endfunction
+
+
+    function void sample_error_coverage(frame_kind_t frame_kind, frame_error_t error_type);
+        if (err_cov != null && error_type != ERR_NONE) begin
+            cov_err_frame_kind = frame_kind;
+            cov_err_error_type = error_type;
+            err_cov.sample();
+        end
+    endfunction
     
     //------------------------------------------------------------------------------
     // Debug: Print current routing table
@@ -439,40 +480,46 @@ module simple_uart_switch_tb;
 
         task run_uart_manual_case(
             input string test_name,
-            input logic [7:0] addr_sout1,
+            input logic [7:0] addr,
             input logic [7:0] data,
             input bit addr_start_bit = 0,
             input bit data_start_bit = 0,
-            input bit addr_parity_bit = ^addr_sout1,
+            input bit addr_parity_bit = ^addr,
             input bit data_parity_bit = ^data,
             input bit addr_stop_bit = 1,
             input bit data_stop_bit = 1,
-            input bit expect_no_output = 0
+            input bit expect_no_output = 0,
+            input frame_error_t addr_error = ERR_NONE,
+            input frame_error_t data_error = ERR_NONE
         );
             int port;
             begin
-                prepare_capture_for_addr(addr_sout1, test_name, port);
+                prepare_capture_for_addr(addr, test_name, port);
                 if (port == -1)
                     return;
     
                 sent_frames.delete();
                 $display(
-                    "[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
-                    $time, test_name, addr_sout1, data, port
+                    "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
+                    $time, test_name, addr, data, port
                 );
     
-                send_uart_byte_test(addr_start_bit, addr_sout1, addr_parity_bit, addr_stop_bit);
+                send_uart_byte_test(addr_start_bit, addr, addr_parity_bit, addr_stop_bit);
                 send_uart_byte_test(data_start_bit, data, data_parity_bit, data_stop_bit);
                 if (expect_no_output)
-                    expect_no_frames(addr_sout1, test_name, port);
+                    expect_no_frames(addr, test_name, port);
                 else begin
-                    compare_expected_data(addr_sout1, sent_frames);
+                    compare_expected_data(addr, sent_frames);
                     if (fwd_cov != null) begin
-                        cov_addr = addr_sout1;
+                        cov_addr = addr;
                         cov_data = data;
                         cov_port = port;
                         fwd_cov.sample();
                     end
+                end
+                if (expect_no_output) begin
+                    sample_error_coverage(FRAME_KIND_ADDR, addr_error);
+                    sample_error_coverage(FRAME_KIND_DATA, data_error);
                 end
                 sent_frames.delete();
             end
@@ -738,7 +785,7 @@ module simple_uart_switch_tb;
             reset_SWITCH();
             #(10*CLK_PERIOD);
     
-            $display("[%0t] Start testu port sout1\n", $time);
+            
     
             $write ("---------------------------------------------\n");
             $write ("----------- Programowanie adresow -----------\n");
@@ -770,58 +817,119 @@ module simple_uart_switch_tb;
 
             run_full_forwarding_sweep();
 
-            // uszkodzony bit parzystści w data dla sout0
+            // uszkodzone ramki danych
             run_uart_manual_case(
                 "Bledny bit parzystosci danych na sout0",
                 addr_sout0,
                 data,
                 .data_parity_bit(~(^data)),
-                .expect_no_output(1)
+                .expect_no_output(1),
+                .data_error(ERR_PARITY_BIT)
             );
 
-            // uszkodzony bit parzystści w data dla sout1
+            run_uart_manual_case(
+                "Bledny start bit danych na sout0",
+                addr_sout0,
+                data,
+                .data_start_bit(1),
+                .expect_no_output(1),
+                .data_error(ERR_START_BIT)
+            );
+
+            run_uart_manual_case(
+                "Bledny stop bit danych na sout0",
+                addr_sout0,
+                data,
+                .data_stop_bit(0),
+                .expect_no_output(1),
+                .data_error(ERR_STOP_BIT)
+            );
+
+
+            // uszkodzone ramki adresowe
+            run_uart_manual_case(
+                "Bledny bit parzystosci adresu na sout0",
+                addr_sout0,
+                data,
+                .addr_parity_bit(~(^addr_sout0)),
+                .expect_no_output(1),
+                .addr_error(ERR_PARITY_BIT)
+            );
+
+            run_uart_manual_case(
+                "Bledny start bit adresu na sout0",
+                addr_sout0,
+                data,
+                .addr_start_bit(1),
+                .expect_no_output(1),
+                .addr_error(ERR_START_BIT)
+            );
+
+            run_uart_manual_case(
+                "Bledny stop bit adresu na sout0",
+                addr_sout0,
+                data,
+                .addr_stop_bit(0),
+                .expect_no_output(1),
+                .addr_error(ERR_STOP_BIT)
+            );
+
+                        //SOUT1
+
+            // uszkodzone ramki danych
             run_uart_manual_case(
                 "Bledny bit parzystosci danych na sout1",
                 addr_sout1,
                 data,
                 .data_parity_bit(~(^data)),
-                .expect_no_output(1)
+                .expect_no_output(1),
+                .data_error(ERR_PARITY_BIT)
             );
 
-            // uszkodzony start bit na sout1
             run_uart_manual_case(
                 "Bledny start bit danych na sout1",
                 addr_sout1,
                 data,
                 .data_start_bit(1),
-                .expect_no_output(1)
+                .expect_no_output(1),
+                .data_error(ERR_START_BIT)
             );
 
-            // uszkodzony start bit na sout0
             run_uart_manual_case(
-                "Bledny start bit danych na sout0",
-                addr_sout0,
-                data,
-                .data_start_bit(1),
-                .expect_no_output(1)
-            );
-            
-            // uszkodzony stop bit na sout1
-            run_uart_manual_case(
-                "Bledny start bit danych na sout1",
+                "Bledny stop bit danych na sout1",
                 addr_sout1,
                 data,
                 .data_stop_bit(0),
-                .expect_no_output(1)
+                .expect_no_output(1),
+                .data_error(ERR_STOP_BIT)
             );
 
-            // uszkodzony stop bit na sout0
+            // uszkodzone ramki adresowe
             run_uart_manual_case(
-                "Bledny start bit danych na sout0",
-                addr_sout0,
+                "Bledny bit parzystosci adresu na sout1",
+                addr_sout1,
                 data,
-                .data_stop_bit(0),
-                .expect_no_output(1)
+                .addr_parity_bit(~(^addr_sout1)),
+                .expect_no_output(1),
+                .addr_error(ERR_PARITY_BIT)
+            );
+
+            run_uart_manual_case(
+                "Bledny start bit adresu na sout1",
+                addr_sout1,
+                data,
+                .addr_start_bit(1),
+                .expect_no_output(1),
+                .addr_error(ERR_START_BIT)
+            );
+
+            run_uart_manual_case(
+                "Bledny stop bit adresu na sout1",
+                addr_sout1,
+                data,
+                .addr_stop_bit(0),
+                .expect_no_output(1),
+                .addr_error(ERR_STOP_BIT)
             );
 
             run_async_reset_case(
