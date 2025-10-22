@@ -56,7 +56,7 @@ module simple_uart_switch_tb;
     //------------------------------------------------------------------------------
     
         typedef struct {
-            logic [7:0] addr_sout1;
+            logic [7:0] addr;
             logic [7:0] port; // 0 = sout0, 1 = sout1
         } routing_entry_t;
         
@@ -181,9 +181,9 @@ module simple_uart_switch_tb;
     // Functions
     //------------------------------------------------------------------------------
     
-        function logic [7:0] get_expected_port(input logic [7:0] addr_sout1);
+        function logic [7:0] get_expected_port(input logic [7:0] addr);
             foreach (routing_table[i]) begin
-                if (routing_table[i].addr_sout1 == addr_sout1)
+                if (routing_table[i].addr == addr)
                     return routing_table[i].port;
             end
             // jeśli brak wpisu
@@ -223,7 +223,7 @@ module simple_uart_switch_tb;
                     port_str = {esc_yellow, "???", esc_reset};
         
                 $display("  %3d   |  0x%02h    |  %s",
-                         i, routing_table[i].addr_sout1, port_str);
+                         i, routing_table[i].addr, port_str);
             end
         
             $display("%s==============================%s\n", esc_yellow, esc_reset);
@@ -331,19 +331,32 @@ module simple_uart_switch_tb;
                              frame.start_bit, frame.data, frame.parity, frame.stop_bit);
         endfunction
 
-        task program_all_addresses();
+        task program_all_addresses(input bit reverse_order = 0);
             begin
-                print_colored("Start programowania wszystkich tras", "yellow");
+                if (reverse_order)
+                    print_colored("Start programowania tras (ODWRÓCONE przypisanie)", "yellow");
+                else
+                    print_colored("Start programowania tras (standardowe przypisanie)", "yellow");
+    
                 routing_table.delete();
                 prog = 1;
                 sin  = 1;
+    
                 for (int i = 0; i < NUM_ADDRS; i++) begin
                     automatic logic [7:0] addr_local = i[7:0];
-                    automatic logic [7:0] port_local = (i < NUM_ADDRS/2) ? 8'h00 : 8'h01;
+                    automatic logic [7:0] port_local;
+    
+                    // wybór przypisania adresu -> portu
+                    if (!reverse_order)
+                        port_local = (i < NUM_ADDRS/2) ? 8'h00 : 8'h01; // standardowo
+                    else
+                        port_local = (i < NUM_ADDRS/2) ? 8'h01 : 8'h00; // odwrócone
+    
                     send_uart_packet(addr_local, port_local);
                     add_routing_entry(addr_local, port_local);
                     #(5*CLK_PERIOD);
                 end
+    
                 print_colored("Programowanie tras zakonczone", "yellow");
             end
         endtask
@@ -353,7 +366,7 @@ module simple_uart_switch_tb;
                 print_colored("Start pelnego testu forwarding dla kazdego adresu i danej", "yellow");
                 for (int addr_idx = 0; addr_idx < NUM_ADDRS; addr_idx++) begin
                     automatic logic [7:0] addr_local = addr_idx[7:0];
-                    $display("[%0t] Forwarding sweep  addr_sout1=0x%0h", $time, addr_local);
+                    $display("[%0t] Forwarding sweep  addr=0x%0h", $time, addr_local);
                     for (int data_idx = 0; data_idx < 256; data_idx++) begin
                         automatic logic [7:0] data_local = data_idx[7:0];
                         run_uart_packet_case("Forwarding sweep", addr_local, data_local, 0);
@@ -378,22 +391,22 @@ module simple_uart_switch_tb;
 
         task run_async_reset_case(
             input string test_name,
-            input logic [7:0] addr_sout1,
+            input logic [7:0] addr,
             input logic [7:0] data
         );
             int port;
             begin
-                prepare_capture_for_addr(addr_sout1, test_name, port);
+                prepare_capture_for_addr(addr, test_name, port);
                 if (port == -1)
                     return;
     
                 sent_frames.delete();
-                $display("[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
-                         $time, test_name, addr_sout1, data, port);
+                $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
+                         $time, test_name, addr, data, port);
     
                 fork
                     begin
-                        send_uart_packet(addr_sout1, data);
+                        send_uart_packet(addr, data);
                     end
                     begin
                         #(CLKS_PER_BIT*CLK_PERIOD*5);
@@ -401,7 +414,7 @@ module simple_uart_switch_tb;
                     end
                 join
     
-                expect_no_frames(addr_sout1, test_name, port);
+                expect_no_frames(addr, test_name, port);
                 if (rst_cov != null) begin
                     cov_rst_port = port;
                     rst_cov.sample();
@@ -411,16 +424,16 @@ module simple_uart_switch_tb;
         endtask
 
         task prepare_capture_for_addr(
-            input logic [7:0] addr_sout1,
+            input logic [7:0] addr,
             input string test_name,
             output int port
         );
             begin
-                port = get_expected_port(addr_sout1);
+                port = get_expected_port(addr);
                 if (port == -1) begin
                     print_colored($sformatf(
-                        "[%0t] %s  brak wpisu routingu dla addr_sout1=0x%0h",
-                        $time, test_name, addr_sout1
+                        "[%0t] %s  brak wpisu routingu dla addr=0x%0h",
+                        $time, test_name, addr
                     ), "yellow");
                     return;
                 end
@@ -448,28 +461,28 @@ module simple_uart_switch_tb;
 
         task run_uart_packet_case(
             input string test_name,
-            input logic [7:0] addr_sout1,
+            input logic [7:0] addr,
             input logic [7:0] data,
             input bit verbose = 1
         );
             int port;
             begin
-                prepare_capture_for_addr(addr_sout1, test_name, port);
+                prepare_capture_for_addr(addr, test_name, port);
                 if (port == -1)
                     return;
 
                 sent_frames.delete();
                 if (verbose) begin
                     $display(
-                        "[%0t] %s  addr_sout1=0x%0h data=0x%0h (port%0d)",
-                        $time, test_name, addr_sout1, data, port
+                        "[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
+                        $time, test_name, addr, data, port
                     );
                 end
 
-                send_uart_packet(addr_sout1, data);
-                compare_expected_data(addr_sout1, sent_frames);
+                send_uart_packet(addr, data);
+                compare_expected_data(addr, sent_frames);
                 if (fwd_cov != null) begin
-                    cov_addr = addr_sout1;
+                    cov_addr = addr;
                     cov_data = data;
                     cov_port = port;
                     fwd_cov.sample();
@@ -575,26 +588,26 @@ module simple_uart_switch_tb;
 
         
 
-        task add_routing_entry(input logic [7:0] addr_sout1, input logic [7:0] port);
+        task add_routing_entry(input logic [7:0] addr, input logic [7:0] port);
             static int found = 0;
             foreach (routing_table[i]) begin
-                if (routing_table[i].addr_sout1 == addr_sout1) begin
+                if (routing_table[i].addr == addr) begin
                     routing_table[i].port = port;
                     found = 1;
                 end
             end
             if (!found)
-                routing_table.push_back('{addr_sout1, port});
-            $display("[%0t] ROUTE: addr_sout1=0x%0h -> port%d zapisano", $time, addr_sout1, port);
+                routing_table.push_back('{addr, port});
+            $display("[%0t] ROUTE: addr=0x%0h -> port%d zapisano", $time, addr, port);
         endtask
     
         
-        task compare_expected_data(input logic [7:0] addr_sout1, input uart_frame_t expected_frames[$]);
+        task compare_expected_data(input logic [7:0] addr, input uart_frame_t expected_frames[$]);
             logic [7:0] port_exp;
             begin
-                port_exp = get_expected_port(addr_sout1);
+                port_exp = get_expected_port(addr);
                 if (port_exp == -1) begin
-                    print_colored($sformatf("Brak wpisu routingu dla addr_sout1=0x%0h", addr_sout1), "yellow");
+                    print_colored($sformatf("Brak wpisu routingu dla addr=0x%0h", addr), "yellow");
                     return;
                 end
 
@@ -613,7 +626,7 @@ module simple_uart_switch_tb;
         endtask
 
         task expect_no_frames(
-            input logic [7:0] addr_sout1,
+            input logic [7:0] addr,
             input string test_name,
             input int port
         );
@@ -639,15 +652,15 @@ module simple_uart_switch_tb;
     
                 if (frames_to_report.size() == 0) begin
                     print_colored($sformatf(
-                        "TEST PASSED  ramka dla addr_sout1=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
-                        addr_sout1,
+                        "TEST PASSED  ramka dla addr=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
+                        addr,
                         port == 0 ? "sout0" : "sout1"
                     ), "green");
                 end
                 else begin
                     print_colored($sformatf(
-                        "TEST FAILED  addr_sout1=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
-                        addr_sout1,
+                        "TEST FAILED  addr=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
+                        addr,
                         frames_to_report.size(),
                         port == 0 ? "sout0" : "sout1"
                     ), "red");
@@ -791,7 +804,7 @@ module simple_uart_switch_tb;
             $write ("----------- Programowanie adresow -----------\n");
             $write ("---------------------------------------------\n");
     
-            program_all_addresses();
+            program_all_addresses(1);
 
             sent_frames.delete();
 
@@ -810,12 +823,25 @@ module simple_uart_switch_tb;
             prog = 0;
     
             
-
-            run_uart_packet_case("Forwarding do sout1", addr_sout1, data);
-
-            run_uart_packet_case("Forwarding do sout0", addr_sout0, data);
-
             run_full_forwarding_sweep();
+
+
+            // Zmiana kolejnści adresow
+
+            reset_SWITCH();
+            #(10*CLK_PERIOD);
+
+            program_all_addresses();
+            print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
+            print_routing_table();
+            sent_frames.delete();
+            prog = 0;
+            
+            run_full_forwarding_sweep();
+
+            $write ("---------------------------------------------\n");
+            $write ("----------- TEST uszkodzonych ramek ---------\n");
+            $write ("---------------------------------------------\n");
 
             // uszkodzone ramki danych
             run_uart_manual_case(
