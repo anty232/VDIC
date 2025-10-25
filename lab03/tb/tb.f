@@ -1,9 +1,9 @@
 ../../common/simple_uart_switch.svp
-top_tb.sv
+uartswitch_tb_pkg.sv
+bfm_if.sv
 coverage.sv
 scoreboard.sv
 tpgen.sv
-bfm_in.sv
-uartswitch_tb_pkg.sv
+top_tb.sv
 
 
