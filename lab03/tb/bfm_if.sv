@@ -82,12 +82,27 @@ interface bfm_if;
     //------------------------------------------------------------------------------
     // UART driving utilities
     //------------------------------------------------------------------------------
+    task automatic wait_clock_cycles(input int cycles);
+        repeat (cycles) @(posedge clk);
+    endtask
+
     task automatic reset_switch();
         rst_n = 1'b0;
         prog  = 1'b1;
         sin   = 1'b1;
-        #(10*CLK_PERIOD);
+        wait_clock_cycles(10);
         rst_n = 1'b1;
+    endtask
+
+    task automatic apply_async_reset(input string reason);
+        $display("[%0t] ASYNC RESET start  %s", $time, reason);
+        #(CLK_PERIOD/4);
+        rst_n = 0;
+        wait_clock_cycles(3);
+        @(posedge clk);
+        rst_n = 1;
+        @(posedge clk);
+        $display("[%0t] ASYNC RESET koniec  %s", $time, reason);
     endtask
 
     task automatic send_uart_byte(input logic [7:0] data);
@@ -169,5 +184,107 @@ interface bfm_if;
             -> error_sample_ev;
         end
     endtask
+
+    task automatic monitor_uart_output(
+        input string port_name,
+        ref logic serial_line,
+        ref bit capture_done,
+        ref uart_frame_t frame_queue[$]
+    );
+        bit prev;
+        longint wait_limit;
+
+        forever begin
+            prev = 1'b1;
+
+            fork
+                begin : WAIT_START
+                    forever begin
+                        @(posedge clk);
+                        if (prev === 1 && serial_line === 0) begin
+                            disable TIMEOUT;
+                            $display("[%0t] Start bit wykryty na %s", $time, port_name);
+
+                            frame_queue.delete();
+                            capture_done = 0;
+
+                            for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+                                uart_frame_t frame;
+                                bit start_found = 1'b1;
+
+                                if (frame_idx == 0) begin
+                                    frame.start_bit = serial_line;
+                                end
+                                else begin
+                                    start_found = 0;
+                                    wait_limit = timeout_cycles;
+                                    while (wait_limit > 0) begin
+                                        bit prev_local = serial_line;
+                                        @(posedge clk);
+                                        wait_limit--;
+                                        if (prev_local === 1 && serial_line === 0) begin
+                                            start_found = 1;
+                                            break;
+                                        end
+                                    end
+
+                                    if (!start_found) begin
+                                        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
+                                                                $time, port_name), "yellow");
+                                        break;
+                                    end
+
+                                    frame.start_bit = serial_line;
+                                end
+
+                                for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                                    repeat (CLKS_PER_BIT) @(posedge clk);
+                                    frame.data[bit_index] = serial_line;
+                                end
+
+                                repeat (CLKS_PER_BIT) @(posedge clk);
+                                frame.parity = serial_line;
+
+                                repeat (CLKS_PER_BIT) @(posedge clk);
+                                frame.stop_bit = serial_line;
+
+                                frame_queue.push_back(frame);
+                            end
+
+                            capture_done = 1;
+                            $display("[%0t] Akwizycja zakonczona, zebrano %0d ramek",
+                                     $time, frame_queue.size());
+
+                            foreach (frame_queue[i])
+                                $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
+                            if (frame_queue.size() < MONITOR_FRAMES)
+                                print_colored($sformatf("[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d",
+                                                        $time, MONITOR_FRAMES, frame_queue.size()), "yellow");
+                            $write("\n");
+
+                            disable TIMEOUT;
+                            disable WAIT_START;
+                        end
+                        prev = serial_line;
+                    end
+                end
+
+                begin : TIMEOUT
+                    repeat (timeout_cycles) @(posedge clk);
+                    capture_done = 1;
+                    print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
+                                            $time, port_name, timeout_cycles), "yellow");
+                    disable WAIT_START;
+                end
+            join
+        end
+    endtask
+
+    initial begin
+        fork
+            monitor_uart_output("sout0", sout0, capture_done_sout0, captured_frames_sout0);
+            monitor_uart_output("sout1", sout1, capture_done_sout1, captured_frames_sout1);
+        join_none
+    end
 
 endinterface : bfm_if

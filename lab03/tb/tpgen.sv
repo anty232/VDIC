@@ -54,7 +54,7 @@ module tpgen(bfm_if bfm);
 
             bfm.send_uart_packet(addr_local, port_local);
             bfm.add_routing_entry(addr_local, port_local);
-            #(5*CLK_PERIOD);
+            bfm.wait_clock_cycles(5);
         end
 
         print_colored("Programowanie tras zakonczone", "yellow");
@@ -96,17 +96,6 @@ module tpgen(bfm_if bfm);
         print_colored("Pelny test forwarding zakonczony", "yellow");
     endtask
 
-    task automatic apply_async_reset(input string reason);
-        $display("[%0t] ASYNC RESET start  %s", $time, reason);
-        #(CLK_PERIOD/4);
-        bfm.rst_n = 0;
-        #(3*CLK_PERIOD);
-        @(posedge bfm.clk);
-        bfm.rst_n = 1;
-        @(posedge bfm.clk);
-        $display("[%0t] ASYNC RESET koniec  %s", $time, reason);
-    endtask
-
     task automatic run_async_reset_case(
         input string test_name,
         input logic [7:0] addr,
@@ -126,8 +115,8 @@ module tpgen(bfm_if bfm);
                 bfm.send_uart_packet(addr, data);
             end
             begin
-                #(CLKS_PER_BIT*CLK_PERIOD*5);
-                apply_async_reset({test_name, " (async)"});
+                bfm.wait_clock_cycles(CLKS_PER_BIT*5);
+                bfm.apply_async_reset({test_name, " (async)"});
             end
         join
 
@@ -186,7 +175,7 @@ module tpgen(bfm_if bfm);
         logic [7:0] data       = 8'hAA;
 
         bfm.reset_switch();
-        #(10*CLK_PERIOD);
+        bfm.wait_clock_cycles(10);
 
         $write ("---------------------------------------------\n");
         $write ("----------- Programowanie adresow -----------\n");
@@ -208,7 +197,7 @@ module tpgen(bfm_if bfm);
         run_full_forwarding_sweep();
 
         bfm.reset_switch();
-        #(10*CLK_PERIOD);
+        bfm.wait_clock_cycles(10);
 
         program_all_addresses();
         print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");

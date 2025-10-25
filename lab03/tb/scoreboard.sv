@@ -2,104 +2,6 @@ module scoreboard(bfm_if bfm);
     import uartswitch_tb_pkg::*;
 
     //------------------------------------------------------------------------------
-    // Monitor serial outputs and capture frames
-    //------------------------------------------------------------------------------
-    task automatic monitor_uart_output(
-        input string port_name,
-        ref logic serial_line,
-        ref bit capture_done,
-        ref uart_frame_t frame_queue[$]
-    );
-        bit prev;
-        longint wait_limit;
-
-        forever begin
-            prev = 1'b1;
-
-            fork
-                begin : WAIT_START
-                    forever begin
-                        @(posedge bfm.clk);
-                        if (prev === 1 && serial_line === 0) begin
-                            disable TIMEOUT;
-                            $display("[%0t] Start bit wykryty na %s", $time, port_name);
-
-                            frame_queue.delete();
-                            capture_done = 0;
-
-                            for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
-                                uart_frame_t frame;
-                                bit start_found = 1'b1;
-
-                                if (frame_idx == 0) begin
-                                    frame.start_bit = serial_line;
-                                end
-                                else begin
-                                    start_found = 0;
-                                    wait_limit = bfm.timeout_cycles;
-                                    while (wait_limit > 0) begin
-                                        bit prev_local = serial_line;
-                                        @(posedge bfm.clk);
-                                        wait_limit--;
-                                        if (prev_local === 1 && serial_line === 0) begin
-                                            start_found = 1;
-                                            break;
-                                        end
-                                    end
-
-                                    if (!start_found) begin
-                                        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
-                                                                $time, port_name), "yellow");
-                                        break;
-                                    end
-
-                                    frame.start_bit = serial_line;
-                                end
-
-                                for (int bit_index = 0; bit_index < 8; bit_index++) begin
-                                    repeat (CLKS_PER_BIT) @(posedge bfm.clk);
-                                    frame.data[bit_index] = serial_line;
-                                end
-
-                                repeat (CLKS_PER_BIT) @(posedge bfm.clk);
-                                frame.parity = serial_line;
-
-                                repeat (CLKS_PER_BIT) @(posedge bfm.clk);
-                                frame.stop_bit = serial_line;
-
-                                frame_queue.push_back(frame);
-                            end
-
-                            capture_done = 1;
-                            $display("[%0t] Akwizycja zakonczona, zebrano %0d ramek",
-                                     $time, frame_queue.size());
-
-                            foreach (frame_queue[i])
-                                $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
-                            if (frame_queue.size() < MONITOR_FRAMES)
-                                print_colored($sformatf("[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d",
-                                                        $time, MONITOR_FRAMES, frame_queue.size()), "yellow");
-                            $write("\n");
-
-                            disable TIMEOUT;
-                            disable WAIT_START;
-                        end
-                        prev = serial_line;
-                    end
-                end
-
-                begin : TIMEOUT
-                    repeat (bfm.timeout_cycles) @(posedge bfm.clk);
-                    capture_done = 1;
-                    print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
-                                            $time, port_name, bfm.timeout_cycles), "yellow");
-                    disable WAIT_START;
-                end
-            join
-        end
-    endtask
-
-    //------------------------------------------------------------------------------
     // Comparison helpers
     //------------------------------------------------------------------------------
     task automatic compare_frames(
@@ -257,12 +159,5 @@ module scoreboard(bfm_if bfm);
     );
         bfm.trigger_error_cov(frame_kind, error_type);
     endtask
-
-    initial begin
-        fork
-            monitor_uart_output("sout0", bfm.sout0, bfm.capture_done_sout0, bfm.captured_frames_sout0);
-            monitor_uart_output("sout1", bfm.sout1, bfm.capture_done_sout1, bfm.captured_frames_sout1);
-        join_none
-    end
 
 endmodule : scoreboard
