@@ -36,6 +36,15 @@ package uartswitch_tb_pkg;
         logic [7:0] port; // 0 = sout0, 1 = sout1
     } routing_entry_t;
 
+    typedef struct {
+        string        test_name;
+        logic [7:0]   addr;
+        bit           expect_no_output;
+        int           port;
+        uart_frame_t  frames[$];
+        bit           valid;
+    } input_transaction_t;
+
     typedef enum bit {
         TEST_PASSED,
         TEST_FAILED

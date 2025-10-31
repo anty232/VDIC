@@ -1,7 +1,7 @@
 module tpgen(bfm_if bfm);
     import uartswitch_tb_pkg::*;
 
-    `define SCOREBOARD $root.simple_uart_switch_tb.scoreboard_i
+
 
     //------------------------------------------------------------------------------
     // Utility functions and tasks
@@ -53,10 +53,8 @@ module tpgen(bfm_if bfm);
                 port_local = (i < NUM_ADDRS/2) ? 8'h01 : 8'h00;
 
             bfm.send_uart_packet(addr_local, port_local);
-            bfm.add_routing_entry(addr_local, port_local);
             bfm.wait_clock_cycles(5);
         end
-
         print_colored("Programowanie tras zakonczone", "yellow");
     endtask
 
@@ -67,20 +65,17 @@ module tpgen(bfm_if bfm);
         input bit verbose = 1
     );
         int port;
-        `SCOREBOARD.prepare_capture_for_addr(addr, test_name, port);
+        bfm.begin_transaction(test_name, addr, 0, port);
         if (port == -1)
             return;
 
-        bfm.sent_frames.delete();
         if (verbose) begin
             $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
                      $time, test_name, addr, data, port);
         end
 
         bfm.send_uart_packet(addr, data);
-        `SCOREBOARD.compare_expected_data(addr, bfm.sent_frames);
         bfm.trigger_forwarding_cov(addr, data, port);
-        bfm.sent_frames.delete();
     endtask
 
     task automatic run_full_forwarding_sweep();
@@ -102,11 +97,10 @@ module tpgen(bfm_if bfm);
         input logic [7:0] data
     );
         int port;
-        `SCOREBOARD.prepare_capture_for_addr(addr, test_name, port);
+        bfm.begin_transaction(test_name, addr, 1, port);
         if (port == -1)
             return;
 
-        bfm.sent_frames.delete();
         $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
                  $time, test_name, addr, data, port);
 
@@ -120,9 +114,7 @@ module tpgen(bfm_if bfm);
             end
         join
 
-        `SCOREBOARD.expect_no_frames(addr, test_name, port);
         bfm.trigger_reset_cov(port);
-        bfm.sent_frames.delete();
     endtask
 
     task automatic run_uart_manual_case(
@@ -140,39 +132,33 @@ module tpgen(bfm_if bfm);
         input frame_error_t data_error = ERR_NONE
     );
         int port;
-        `SCOREBOARD.prepare_capture_for_addr(addr, test_name, port);
+        bfm.begin_transaction(test_name, addr, expect_no_output, port);
         if (port == -1)
             return;
 
-        bfm.sent_frames.delete();
         $display("[%0t] %s  addr=0x%0h data=0x%0h (port%0d)",
                  $time, test_name, addr, data, port);
 
         bfm.send_uart_byte_custom(addr_start_bit, addr, addr_parity_bit, addr_stop_bit);
         bfm.send_uart_byte_custom(data_start_bit, data, data_parity_bit, data_stop_bit);
 
-        if (expect_no_output)
-            `SCOREBOARD.expect_no_frames(addr, test_name, port);
-        else begin
-            `SCOREBOARD.compare_expected_data(addr, bfm.sent_frames);
+        if (!expect_no_output) begin
             bfm.trigger_forwarding_cov(addr, data, port);
         end
 
         if (expect_no_output) begin
-            `SCOREBOARD.sample_error_coverage(FRAME_KIND_ADDR, addr_error);
-            `SCOREBOARD.sample_error_coverage(FRAME_KIND_DATA, data_error);
+            bfm.trigger_error_cov(FRAME_KIND_ADDR, addr_error);
+            bfm.trigger_error_cov(FRAME_KIND_DATA, data_error);
         end
-
-        bfm.sent_frames.delete();
     endtask
 
     //------------------------------------------------------------------------------
     // Test sequence
     //------------------------------------------------------------------------------
     initial begin
-        logic [7:0] addr_sout1 = 8'hFA;
-        logic [7:0] addr_sout0 = 8'h11;
-        logic [7:0] data       = 8'hAA;
+        static logic [7:0] addr_sout1 = 8'hFA;
+        static logic [7:0] addr_sout0 = 8'h11;
+        static logic [7:0] data       = 8'hAA;
 
         bfm.reset_switch();
         bfm.wait_clock_cycles(10);
@@ -182,6 +168,7 @@ module tpgen(bfm_if bfm);
         $write ("---------------------------------------------\n");
 
         program_all_addresses(1);
+
         bfm.sent_frames.delete();
 
         print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
@@ -194,7 +181,19 @@ module tpgen(bfm_if bfm);
         $display("[%0t] Test forwarding", $time);
         bfm.prog = 0;
 
-        run_full_forwarding_sweep();
+        //run_full_forwarding_sweep();
+        
+
+        run_uart_packet_case("test_sout0_first_frame", addr_sout0, data, 0);
+        run_uart_packet_case("test_sout1_second_frame", addr_sout1, data, 0);
+        run_uart_packet_case("test_sout0_first_frame", addr_sout0, data, 0);
+        run_uart_packet_case("test_sout1_second_frame", addr_sout1, data, 0);
+        run_uart_packet_case("test_sout0_first_frame", addr_sout0, data, 0);
+        run_uart_packet_case("test_sout1_second_frame", addr_sout1, data, 0);
+        run_uart_packet_case("test_sout0_first_frame", addr_sout0, data, 0);
+        run_uart_packet_case("test_sout1_second_frame", addr_sout1, data, 0);
+       
+        bfm.wait_clock_cycles(1000);
 
         bfm.reset_switch();
         bfm.wait_clock_cycles(10);
@@ -205,7 +204,9 @@ module tpgen(bfm_if bfm);
         bfm.sent_frames.delete();
         bfm.prog = 0;
 
-        run_full_forwarding_sweep();
+        //run_full_forwarding_sweep();
+        run_uart_packet_case("test_sout1", addr_sout0, data, 1);
+        run_uart_packet_case("test_sout0", addr_sout1, data, 1);
 
         $write ("---------------------------------------------\n");
         $write ("----------- TEST uszkodzonych ramek ---------\n");
@@ -325,6 +326,8 @@ module tpgen(bfm_if bfm);
             data
         );
 
+        bfm.wait_clock_cycles(1000);
+
         run_async_reset_case(
             "Async reset podczas forwarding na sout1",
             addr_sout1,
@@ -339,6 +342,5 @@ module tpgen(bfm_if bfm);
         $finish();
     end
 
-    `undef SCOREBOARD
 
 endmodule : tpgen

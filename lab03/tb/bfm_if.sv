@@ -17,13 +17,23 @@ interface bfm_if;
     uart_frame_t sent_frames[$];
     uart_frame_t captured_frames_sout0[$];
     uart_frame_t captured_frames_sout1[$];
+    uart_frame_t captured_frames_sin[$];
 
     bit capture_done_sout0 = 0;
     bit capture_done_sout1 = 0;
+    bit capture_done_sin   = 0;
 
     routing_entry_t routing_table[$];
 
     time timeout_cycles = TIMEOUT_CYCLES;
+
+    uartswitch_tb_pkg::input_transaction_t current_tx;
+    bit input_capture_enable      = 0;
+    bit scoreboard_ready_for_next = 1;
+
+    event input_capture_done_ev;
+    event sout0_capture_done_ev;
+    event sout1_capture_done_ev;
 
     //------------------------------------------------------------------------------
     // Coverage signaling
@@ -153,6 +163,84 @@ interface bfm_if;
     task automatic send_uart_packet(input logic [7:0] b0, input logic [7:0] b1);
         send_uart_byte(b0);
         send_uart_byte(b1);
+        if (prog) begin
+            add_routing_entry(b0, b1);
+        end
+    endtask
+
+    task automatic begin_transaction(
+        input string test_name,
+        input logic [7:0] addr,
+        input bit expect_no_output,
+        output int port
+    );
+        wait (scoreboard_ready_for_next == 1);
+        scoreboard_ready_for_next = 0;
+
+        current_tx.test_name        = test_name;
+        current_tx.addr             = addr;
+        current_tx.expect_no_output = expect_no_output;
+        current_tx.frames.delete();
+        current_tx.valid            = 0;
+
+        port = get_expected_port(addr);
+        current_tx.port = port;
+
+        if (port == -1) begin
+            print_colored($sformatf(
+                "[%0t] %s  brak wpisu routingu dla addr=0x%0h",
+                $time,
+                test_name,
+                addr
+            ), "yellow");
+            input_capture_enable = 0;
+            capture_done_sin     = 1;
+            scoreboard_ready_for_next = 1;
+            return;
+        end
+
+        if (port == 0) begin
+            capture_done_sout0 = 0;
+            captured_frames_sout0.delete();
+        end
+        else if (port == 1) begin
+            capture_done_sout1 = 0;
+            captured_frames_sout1.delete();
+        end
+
+        capture_done_sin = 0;
+        captured_frames_sin.delete();
+        input_capture_enable = 1;
+    endtask
+
+    task automatic complete_transaction();
+        scoreboard_ready_for_next = 1;
+    endtask
+
+    task automatic wait_for_output_capture(input int port);
+        case (port)
+            0: begin
+                if (!capture_done_sout0)
+                    @(sout0_capture_done_ev);
+            end
+            1: begin
+                if (!capture_done_sout1)
+                    @(sout1_capture_done_ev);
+            end
+            default: ;
+        endcase
+    endtask
+
+    task automatic wait_for_input_transaction();
+        @(input_capture_done_ev);
+    endtask
+
+    task automatic get_last_input_transaction(
+        output uartswitch_tb_pkg::input_transaction_t tx
+    );
+        tx = current_tx;
+        current_tx.frames.delete();
+        current_tx.valid = 0;
     endtask
 
     //------------------------------------------------------------------------------
@@ -252,6 +340,10 @@ interface bfm_if;
                             end
 
                             capture_done = 1;
+                            if (port_name == "sout0")
+                                -> sout0_capture_done_ev;
+                            else if (port_name == "sout1")
+                                -> sout1_capture_done_ev;
                             $display("[%0t] Akwizycja zakonczona, zebrano %0d ramek",
                                      $time, frame_queue.size());
 
@@ -272,9 +364,116 @@ interface bfm_if;
                 begin : TIMEOUT
                     repeat (timeout_cycles) @(posedge clk);
                     capture_done = 1;
+                    if (port_name == "sout0")
+                        -> sout0_capture_done_ev;
+                    else if (port_name == "sout1")
+                        -> sout1_capture_done_ev;
                     print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
                                             $time, port_name, timeout_cycles), "yellow");
                     disable WAIT_START;
+                end
+            join
+        end
+    endtask
+
+    task automatic monitor_uart_input();
+        bit prev;
+        longint wait_limit;
+
+        forever begin
+            wait (input_capture_enable);
+
+            prev = 1'b1;
+
+            fork
+                begin : WAIT_START_SIN
+                    forever begin
+                        @(posedge clk);
+
+                        if (!input_capture_enable)
+                            disable WAIT_START_SIN;
+
+                        if (prev === 1 && sin === 0) begin
+                            disable TIMEOUT_SIN;
+
+                            captured_frames_sin.delete();
+
+                            for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+                                uart_frame_t frame;
+                                bit start_found = 1'b1;
+
+                                if (frame_idx == 0) begin
+                                    frame.start_bit = sin;
+                                end
+                                else begin
+                                    start_found = 0;
+                                    wait_limit = timeout_cycles;
+                                    while (wait_limit > 0) begin
+                                        bit prev_local = sin;
+                                        @(posedge clk);
+                                        wait_limit--;
+                                        if (prev_local === 1 && sin === 0) begin
+                                            start_found = 1;
+                                            break;
+                                        end
+                                    end
+
+                                    if (!start_found) begin
+                                        print_colored($sformatf(
+                                            "[%0t] Nie wykryto kolejnego bitu start na sin",
+                                            $time
+                                        ), "yellow");
+                                        break;
+                                    end
+
+                                    frame.start_bit = sin;
+                                end
+
+                                for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                                    repeat (CLKS_PER_BIT) @(posedge clk);
+                                    frame.data[bit_index] = sin;
+                                end
+
+                                repeat (CLKS_PER_BIT) @(posedge clk);
+                                frame.parity = sin;
+
+                                repeat (CLKS_PER_BIT) @(posedge clk);
+                                frame.stop_bit = sin;
+
+                                captured_frames_sin.push_back(frame);
+                            end
+
+                            capture_done_sin     = 1;
+                            input_capture_enable = 0;
+
+                            current_tx.frames = captured_frames_sin;
+                            current_tx.valid  = 1;
+
+                            -> input_capture_done_ev;
+
+                            disable WAIT_START_SIN;
+                        end
+
+                        prev = sin;
+                    end
+                end
+
+                begin : TIMEOUT_SIN
+                    repeat (timeout_cycles) @(posedge clk);
+                    if (input_capture_enable) begin
+                        capture_done_sin     = 1;
+                        captured_frames_sin.delete();
+                        current_tx.frames = captured_frames_sin;
+                        current_tx.valid  = 1;
+                        input_capture_enable = 0;
+                        print_colored($sformatf(
+                            "[%0t] Timeout na sin  brak start bitu w ciagu %0d cykli",
+                            $time,
+                            timeout_cycles
+                        ), "yellow");
+                        -> input_capture_done_ev;
+                    end
+                    disable WAIT_START_SIN;
                 end
             join
         end
@@ -284,6 +483,7 @@ interface bfm_if;
         fork
             monitor_uart_output("sout0", sout0, capture_done_sout0, captured_frames_sout0);
             monitor_uart_output("sout1", sout1, capture_done_sout1, captured_frames_sout1);
+            monitor_uart_input();
         join_none
     end
 
