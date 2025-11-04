@@ -1,6 +1,25 @@
 module scoreboard(bfm_if bfm);
     import uartswitch_tb_pkg::*;
 
+    int unsigned passed_tests = 0;
+    int unsigned failed_tests = 0;
+
+    task automatic record_test_result(
+        input test_result_t result,
+        input string        message
+    );
+        case (result)
+            TEST_PASSED: begin
+                passed_tests++;
+                print_colored(message, "green");
+            end
+            TEST_FAILED: begin
+                failed_tests++;
+                print_colored(message, "red");
+            end
+        endcase
+    endtask
+
     //------------------------------------------------------------------------------
     // Comparison helpers
     //------------------------------------------------------------------------------
@@ -47,9 +66,11 @@ module scoreboard(bfm_if bfm);
         end
 
         if (mismatches == 0)
-            print_colored("TEST PASSED  ramki na wyjsciu zgodne z wejsciem", "green");
+            record_test_result(TEST_PASSED,
+                                "TEST PASSED  ramki na wyjsciu zgodne z wejsciem");
         else
-            print_colored($sformatf("TEST FAILED  %0d roznic w ramkach", mismatches), "red");
+            record_test_result(TEST_FAILED,
+                                $sformatf("TEST FAILED  %0d roznic w ramkach", mismatches));
         $write("\n\n");
     endtask
 
@@ -65,9 +86,9 @@ module scoreboard(bfm_if bfm);
                 bfm.wait_for_output_capture(1);
                 compare_frames(bfm.captured_frames_sout1, tx.frames);
             end
-            default: begin
-                print_colored("Niepoprawny port w tablicy routingu", "red");
-            end
+            default:
+                record_test_result(TEST_FAILED, "Niepoprawny port w tablicy routingu");
+            
         endcase
     endtask
 
@@ -86,28 +107,37 @@ module scoreboard(bfm_if bfm);
                 frames_to_report = bfm.captured_frames_sout1;
             end
             default: begin
-                print_colored($sformatf(
-                    "[%0t] %s  niepoprawny port=%0d w expect_no_frames",
-                    $time, tx.test_name, tx.port
-                ), "red");
+                record_test_result(
+                    TEST_FAILED,
+                    $sformatf(
+                        "[%0t] %s  niepoprawny port=%0d w expect_no_frames",
+                        $time, tx.test_name, tx.port
+                    )
+                );
                 return;
             end
         endcase
 
         if (frames_to_report.size() == 0) begin
-            print_colored($sformatf(
-                "TEST PASSED  ramka dla addr=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
-                tx.addr,
-                tx.port == 0 ? "sout0" : "sout1"
-            ), "green");
+            record_test_result(
+                TEST_PASSED,
+                $sformatf(
+                    "TEST PASSED  ramka dla addr=0x%0h nie dotarla na %s (oczekiwano odrzucenia)",
+                    tx.addr,
+                    tx.port == 0 ? "sout0" : "sout1"
+                )
+            );
         end
         else begin
-            print_colored($sformatf(
-                "TEST FAILED  addr=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
-                tx.addr,
-                frames_to_report.size(),
-                tx.port == 0 ? "sout0" : "sout1"
-            ), "red");
+            record_test_result(
+                TEST_FAILED,
+                $sformatf(
+                    "TEST FAILED  addr=0x%0h otrzymano %0d ramek na %s mimo oczekiwanego odrzucenia",
+                    tx.addr,
+                    frames_to_report.size(),
+                    tx.port == 0 ? "sout0" : "sout1"
+                )
+            );
             foreach (frames_to_report[i])
                 $display("    Frame %0d: %s", i, frame_to_string(frames_to_report[i]));
             $write("\n");
@@ -158,6 +188,17 @@ module scoreboard(bfm_if bfm);
             bfm.get_last_input_transaction(tx);
             process_transaction(tx);
         end
+    end
+
+    final begin
+        string green_esc = "\033[1;32m";
+        string red_esc   = "\033[1;31m";
+        string reset_esc = "\033[0m";
+
+        $display("TEST SUMMARY");
+        $display("%sPASSED=%0d%s", green_esc, passed_tests, reset_esc);
+        $display("%sFAILED=%0d%s", red_esc, failed_tests, reset_esc);
+        $write("\n");
     end
 
 endmodule : scoreboard

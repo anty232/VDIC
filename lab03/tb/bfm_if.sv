@@ -277,6 +277,75 @@ interface bfm_if;
         end
     endtask
 
+    task automatic wait_for_next_start_bit(
+        ref logic serial_line,
+        input string port_name,
+        output bit start_found
+    );
+        longint wait_limit = timeout_cycles;
+        start_found = 0;
+
+        while (wait_limit > 0) begin
+            bit prev_local = serial_line;
+            @(posedge clk);
+            wait_limit--;
+            if (prev_local === 1 && serial_line === 0) begin
+                start_found = 1;
+                return;
+            end
+        end
+
+        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
+                                $time, port_name), "yellow");
+    endtask
+
+    task automatic collect_uart_frames(
+        ref logic serial_line,
+        input string port_name,
+        ref uart_frame_t frame_queue[$],
+        input bit warn_incomplete
+    );
+        bit start_found;
+
+        frame_queue.delete();
+
+        for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+            uart_frame_t frame;
+
+            if (frame_idx == 0) begin
+                frame.start_bit = serial_line;
+            end
+            else begin
+                wait_for_next_start_bit(serial_line, port_name, start_found);
+                if (!start_found)
+                    break;
+
+                frame.start_bit = serial_line;
+            end
+
+            for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                repeat (CLKS_PER_BIT) @(posedge clk);
+                frame.data[bit_index] = serial_line;
+            end
+
+            repeat (CLKS_PER_BIT) @(posedge clk);
+            frame.parity = serial_line;
+
+            repeat (CLKS_PER_BIT) @(posedge clk);
+            frame.stop_bit = serial_line;
+
+            frame_queue.push_back(frame);
+        end
+
+        if (frame_queue.size() < MONITOR_FRAMES && warn_incomplete) begin
+            print_colored($sformatf(
+                                "[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d na %s",
+                                $time, MONITOR_FRAMES, frame_queue.size(), port_name),
+                          "yellow");
+        end
+    endtask
+
+
     task automatic monitor_uart_output(
         input string port_name,
         ref logic serial_line,
@@ -284,7 +353,6 @@ interface bfm_if;
         ref uart_frame_t frame_queue[$]
     );
         bit prev;
-        longint wait_limit;
 
         forever begin
             prev = 1'b1;
@@ -297,51 +365,8 @@ interface bfm_if;
                             disable TIMEOUT;
                             $display("[%0t] Start bit wykryty na %s", $time, port_name);
 
-                            frame_queue.delete();
                             capture_done = 0;
-
-                            for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
-                                uart_frame_t frame;
-                                bit start_found = 1'b1;
-
-                                if (frame_idx == 0) begin
-                                    frame.start_bit = serial_line;
-                                end
-                                else begin
-                                    start_found = 0;
-                                    wait_limit = timeout_cycles;
-                                    while (wait_limit > 0) begin
-                                        bit prev_local = serial_line;
-                                        @(posedge clk);
-                                        wait_limit--;
-                                        if (prev_local === 1 && serial_line === 0) begin
-                                            start_found = 1;
-                                            break;
-                                        end
-                                    end
-
-                                    if (!start_found) begin
-                                        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
-                                                                $time, port_name), "yellow");
-                                        break;
-                                    end
-
-                                    frame.start_bit = serial_line;
-                                end
-
-                                for (int bit_index = 0; bit_index < 8; bit_index++) begin
-                                    repeat (CLKS_PER_BIT) @(posedge clk);
-                                    frame.data[bit_index] = serial_line;
-                                end
-
-                                repeat (CLKS_PER_BIT) @(posedge clk);
-                                frame.parity = serial_line;
-
-                                repeat (CLKS_PER_BIT) @(posedge clk);
-                                frame.stop_bit = serial_line;
-
-                                frame_queue.push_back(frame);
-                            end
+                            collect_uart_frames(serial_line, port_name, frame_queue, 1'b1);
 
                             capture_done = 1;
                             if (port_name == "sout0")
@@ -353,9 +378,6 @@ interface bfm_if;
 
                             foreach (frame_queue[i])
                                 $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
-                            if (frame_queue.size() < MONITOR_FRAMES)
-                                print_colored($sformatf("[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d",
-                                                        $time, MONITOR_FRAMES, frame_queue.size()), "yellow");
                             $write("\n");
 
                             disable TIMEOUT;
@@ -382,7 +404,6 @@ interface bfm_if;
 
     task automatic monitor_uart_input();
         bit prev;
-        longint wait_limit;
 
         forever begin
             wait (input_capture_enable);
@@ -400,52 +421,7 @@ interface bfm_if;
                         if (prev === 1 && sin === 0) begin
                             disable TIMEOUT_SIN;
 
-                            captured_frames_sin.delete();
-
-                            for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
-                                uart_frame_t frame;
-                                bit start_found = 1'b1;
-
-                                if (frame_idx == 0) begin
-                                    frame.start_bit = sin;
-                                end
-                                else begin
-                                    start_found = 0;
-                                    wait_limit = timeout_cycles;
-                                    while (wait_limit > 0) begin
-                                        bit prev_local = sin;
-                                        @(posedge clk);
-                                        wait_limit--;
-                                        if (prev_local === 1 && sin === 0) begin
-                                            start_found = 1;
-                                            break;
-                                        end
-                                    end
-
-                                    if (!start_found) begin
-                                        print_colored($sformatf(
-                                            "[%0t] Nie wykryto kolejnego bitu start na sin",
-                                            $time
-                                        ), "yellow");
-                                        break;
-                                    end
-
-                                    frame.start_bit = sin;
-                                end
-
-                                for (int bit_index = 0; bit_index < 8; bit_index++) begin
-                                    repeat (CLKS_PER_BIT) @(posedge clk);
-                                    frame.data[bit_index] = sin;
-                                end
-
-                                repeat (CLKS_PER_BIT) @(posedge clk);
-                                frame.parity = sin;
-
-                                repeat (CLKS_PER_BIT) @(posedge clk);
-                                frame.stop_bit = sin;
-
-                                captured_frames_sin.push_back(frame);
-                            end
+                            collect_uart_frames(sin, "sin", captured_frames_sin, 1'b0);
 
                             capture_done_sin     = 1;
                             input_capture_enable = 0;
