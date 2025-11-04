@@ -96,6 +96,10 @@ interface bfm_if;
         repeat (cycles) @(posedge clk);
     endtask
 
+    task automatic set_prog(input bit progset);
+        prog = progset;
+    endtask
+
     task automatic reset_switch();
         rst_n = 1'b0;
         prog  = 1'b1;

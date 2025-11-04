@@ -179,9 +179,10 @@ module tpgen(bfm_if bfm);
         $write ("---------------------------------------------\n");
 
         $display("[%0t] Test forwarding", $time);
-        bfm.prog = 0;
+        
+        bfm.set_prog(0);
 
-        //run_full_forwarding_sweep();
+        run_full_forwarding_sweep();
         
 
         run_uart_packet_case("test_sout0_first_frame", addr_sout0, data, 0);
@@ -202,9 +203,9 @@ module tpgen(bfm_if bfm);
         print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
         print_routing_table();
         bfm.sent_frames.delete();
-        bfm.prog = 0;
+        bfm.set_prog(0);
 
-        //run_full_forwarding_sweep();
+        run_full_forwarding_sweep();
         run_uart_packet_case("test_sout1", addr_sout0, data, 1);
         run_uart_packet_case("test_sout0", addr_sout1, data, 1);
 
