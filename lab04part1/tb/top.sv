@@ -1,11 +1,20 @@
-`timescale 1ns/1ps
-
-import shape_pkg::*;
-
 module top;
 
-  function automatic point_s[$] parse_points(string line);
-    point_s result[$];
+  import shape_pkg::*;
+
+  // Alias na kolejkę punktów (queue)
+  typedef point_s point_queue_t[$];
+
+  // Prosta konwersja string -> real z użyciem $sscanf
+  function automatic bit try_parse_real(string s, output real val);
+    if ($sscanf(s, "%f", val) == 1) return 1;
+    if ($sscanf(s, "%g", val) == 1) return 1; // alternatywny format
+    if ($sscanf(s, "%e", val) == 1) return 1; // notacja naukowa
+    return 0;
+  endfunction
+
+  function automatic point_queue_t parse_points(string line);
+    point_queue_t result;
     real coordinates[$];
     string token = "";
     for (int i = 0; i < line.len(); i++) begin
@@ -13,7 +22,12 @@ module top;
       case (c)
         " ", "\t", "\n", "\r": begin
           if (token.len() != 0) begin
-            coordinates.push_back($atof(token));
+            real v;
+            if (try_parse_real(token, v)) begin
+              coordinates.push_back(v);
+            end else begin
+              $warning("Cannot parse real from token '%s'", token);
+            end
             token = "";
           end
         end
@@ -21,7 +35,12 @@ module top;
       endcase
     end
     if (token.len() != 0) begin
-      coordinates.push_back($atof(token));
+      real v;
+      if (try_parse_real(token, v)) begin
+        coordinates.push_back(v);
+      end else begin
+        $warning("Cannot parse real from token '%s'", token);
+      end
     end
 
     if ((coordinates.size() % 2) != 0) begin
@@ -41,20 +60,26 @@ module top;
   initial begin
     string line;
     int file_handle;
-    int line_number = 0;
+    int line_number;
+    point_queue_t points;
+    shape_c      shape;
 
-    file_handle = $fopen("lab04part1_shapes.txt", "r");
+    line_number = 0;
+
+    file_handle = $fopen("../lab04part1_shapes.txt", "r");
     if (file_handle == 0) begin
       $fatal(1, "Failed to open lab04part1_shapes.txt");
     end
 
     while ($fgets(line, file_handle)) begin
       line_number++;
-      point_s points[$] = parse_points(line);
+
+      points = parse_points(line);
       if (points.size() == 0) begin
         continue;
       end
-      shape_c shape = shape_factory::make_shape(points);
+
+      shape = shape_factory::make_shape(points);
       if (shape == null) begin
         $warning("Line %0d: unable to create shape", line_number);
       end

@@ -13,7 +13,7 @@ package shape_pkg;
       end
     endfunction
   
-    class shape_c;
+    virtual class shape_c;
       protected string m_name;
       protected point_s m_points[$];
   
@@ -63,23 +63,23 @@ package shape_pkg;
     endclass : polygon_c
   
     class triangle_c extends polygon_c;
-  
+
       function new(string name, point_s points[$]);
+        super.new(name, points);
         assert(points.size() == 3)
           else $warning("triangle_c created with %0d points", points.size());
-        super.new(name, points);
       endfunction
-  
+
     endclass : triangle_c
-  
+
     class rectangle_c extends polygon_c;
-  
+
       function new(string name, point_s points[$]);
+        super.new(name, points);
         assert(points.size() == 4)
           else $warning("rectangle_c created with %0d points", points.size());
-        super.new(name, points);
       endfunction
-  
+
     endclass : rectangle_c
   
     class circle_c extends shape_c;
@@ -127,14 +127,17 @@ package shape_pkg;
       endfunction
   
       static function void report_shapes();
-        string reporter_name = $typename(T);
+        string reporter_name;
+        real total_area;
+
+        reporter_name = $typename(T);
         if (shape_storage.size() == 0) begin
           $display("No shapes recorded for %s", reporter_name);
           $display("");
           return;
         end
         $display("---- Reporting %s objects ----", reporter_name);
-        real total_area = 0.0;
+        total_area = 0.0;
         foreach (shape_storage[i]) begin
           shape_storage[i].print();
           total_area += shape_storage[i].get_area();
@@ -157,27 +160,41 @@ package shape_pkg;
       static function real distance(point_s p0, point_s p1);
         return circle_c::distance(p0, p1);
       endfunction
-  
+
       static function bit is_rectangle(point_s points[$]);
+        real epsilon;
+        real d0;
+        real d1;
+        int i;
+
         if (points.size() != 4) begin
           return 0;
         end
-        real epsilon = 1e-6;
-        for (int i = 0; i < 4; i++) begin
-          point_s p0 = points[i];
-          point_s p1 = points[(i + 1) % 4];
-          point_s p2 = points[(i + 2) % 4];
-          real v1x = p1.x - p0.x;
-          real v1y = p1.y - p0.y;
-          real v2x = p2.x - p1.x;
-          real v2y = p2.y - p1.y;
-          real dot = v1x * v2x + v1y * v2y;
+        epsilon = 1e-6;
+        for (i = 0; i < 4; i++) begin
+          point_s p0;
+          point_s p1;
+          point_s p2;
+          real v1x;
+          real v1y;
+          real v2x;
+          real v2y;
+          real dot;
+
+          p0 = points[i];
+          p1 = points[(i + 1) % 4];
+          p2 = points[(i + 2) % 4];
+          v1x = p1.x - p0.x;
+          v1y = p1.y - p0.y;
+          v2x = p2.x - p1.x;
+          v2y = p2.y - p1.y;
+          dot = v1x * v2x + v1y * v2y;
           if (abs_real(dot) > epsilon) begin
             return 0;
           end
         end
-        real d0 = distance(points[0], points[2]);
-        real d1 = distance(points[1], points[3]);
+        d0 = distance(points[0], points[2]);
+        d1 = distance(points[1], points[3]);
         if (abs_real(d0 - d1) > epsilon) begin
           return 0;
         end
