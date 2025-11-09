@@ -90,4 +90,10 @@ package uartswitch_tb_pkg;
         $display("%s%s\033[0m", esc, msg);
     endtask
 
+`include "tb_classes/coverage.svh"
+`include "tb_classes/scoreboard.svh"
+`include "tb_classes/tpgen.svh"
+`include "tb_classes/testbench.svh"
+
+
 endpackage : uartswitch_tb_pkg

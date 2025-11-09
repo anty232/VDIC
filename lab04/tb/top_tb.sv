@@ -3,10 +3,7 @@ module simple_uart_switch_tb;
     import uartswitch_tb_pkg::*;
 
     bfm_if bfm();
-
-    coverage  coverage_i (bfm);
-    scoreboard scoreboard_i(bfm);
-    tpgen      tpgen_i     (bfm);
+    testbench tb_h;
 
     simple_switch_uart u_simple_switch_uart (
         .clk  (bfm.clk),
@@ -16,5 +13,10 @@ module simple_uart_switch_tb;
         .sout0(bfm.sout0),
         .sout1(bfm.sout1)
     );
+
+    initial begin
+        tb_h = new(bfm);
+        tb_h.execute();
+    end
 
 endmodule : simple_uart_switch_tb
