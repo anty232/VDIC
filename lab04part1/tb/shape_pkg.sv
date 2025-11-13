@@ -37,18 +37,26 @@ package shape_pkg;
       return m_name;
     endfunction
 
-    // Wspólne drukowanie: nazwa, punkty, pole
-    protected function void print_points();
+    // Wspólne drukowanie punktów (domyślnie wszystkie)
+    virtual function void print_points();
       int i;
       foreach (m_points[i]) begin
-        $display("  P%0d = (%0.3f, %0.3f)", i, m_points[i].x, m_points[i].y);
+        $display("    (%0.2f, %0.2f)", m_points[i].x, m_points[i].y);
       end
     endfunction
 
+    // Hook dla klas pochodnych  domyślnie nic
+    virtual function void print_extra();
+      // podklasy mogą coś tu dopisać (np. radius dla koła)
+    endfunction
+
+    // Wspólne drukowanie: nazwa, punkty, ewentualne extra, pole
     virtual function void print();
-      $display("Shape '%s':", m_name);
+      $display("This is: %s", m_name);
       print_points();
-      $display("  Area  = %0.3f", get_area());
+      print_extra();
+      $display("Area is: %0.2f", get_area());
+      $display("");
     endfunction
   endclass : shape_c
 
@@ -112,6 +120,7 @@ package shape_pkg;
       end
     endfunction
 
+    // używane też w fabryce
     static function real distance(point_s p0, point_s p1);
       real dx;
       real dy;
@@ -128,12 +137,16 @@ package shape_pkg;
       return m_radius;
     endfunction
 
-    // Wymóg: oprócz nazwy/punktów/pola drukujemy też promień
-    virtual function void print();
-      $display("Shape '%s':", m_name);
-      print_points();
-      $display("  Radius = %0.3f", m_radius);
-      $display("  Area   = %0.3f", get_area());
+    // Nadpisanie print_points  dla koła pokazujemy tylko środek
+    virtual function void print_points();
+      if (m_points.size() > 0) begin
+        $display("    (%0.2f, %0.2f)", m_points[0].x, m_points[0].y);
+      end
+    endfunction
+
+    // Nadpisanie hooka  dopisujemy promień
+    virtual function void print_extra();
+      $display("    radius: %0.2f", m_radius);
     endfunction
   endclass : circle_c
 
@@ -149,31 +162,16 @@ package shape_pkg;
     endfunction
 
     static function void report_shapes();
-      string reporter_name;
-      real total_area;
       int  i;
 
-      reporter_name = $typename(T);
-
       if (shape_storage.size() == 0) begin
-        $display("No shapes recorded for %s", reporter_name);
-        $display("");
         return;
       end
 
-      $display("---- Reporting %s objects ----", reporter_name);
-
-      total_area = 0.0;
       foreach (shape_storage[i]) begin
+        $display("--------------------------------------------------------------------------------");
         shape_storage[i].print();
-        total_area += shape_storage[i].get_area();
-        if (i != shape_storage.size() - 1) begin
-          $display("");
-        end
       end
-
-      $display("Total area for %s objects: %0.3f", reporter_name, total_area);
-      $display("");
     endfunction
   endclass : shape_reporter
 
@@ -246,32 +244,32 @@ package shape_pkg;
       case (points.size())
         2: begin
           circle_c circle;
-          circle = new($sformatf("circle_%0d", circle_id++), points);
+          circle = new("circle", points);
           shape_reporter#(circle_c)::add_shape(circle);
           result = circle;
         end
         3: begin
           triangle_c triangle;
-          triangle = new($sformatf("triangle_%0d", triangle_id++), points);
+          triangle = new("triangle", points);
           shape_reporter#(triangle_c)::add_shape(triangle);
           result = triangle;
         end
         4: begin
           if (is_rectangle(points)) begin
             rectangle_c rectangle;
-            rectangle = new($sformatf("rectangle_%0d", rectangle_id++), points);
+            rectangle = new("rectangle", points);
             shape_reporter#(rectangle_c)::add_shape(rectangle);
             result = rectangle;
           end else begin
             polygon_c polygon;
-            polygon = new($sformatf("polygon_%0d", polygon_id++), points);
+            polygon = new("polygon", points);
             shape_reporter#(polygon_c)::add_shape(polygon);
             result = polygon;
           end
         end
         default: begin
           polygon_c polygon;
-          polygon = new($sformatf("polygon_%0d", polygon_id++), points);
+          polygon = new("polygon", points);
           shape_reporter#(polygon_c)::add_shape(polygon);
           result = polygon;
         end
