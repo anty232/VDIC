@@ -1,9 +1,10 @@
 
-module simple_uart_switch_tb;
+module top;
+    import uvm_pkg::*;
+    `include "uvm_macros.svh"
     import uartswitch_tb_pkg::*;
 
     bfm_if bfm();
-    testbench tb_h;
 
     simple_switch_uart u_simple_switch_uart (
         .clk  (bfm.clk),
@@ -15,8 +16,8 @@ module simple_uart_switch_tb;
     );
 
     initial begin
-        tb_h = new(bfm);
-        tb_h.execute();
+        uvm_config_db#(virtual bfm_if)::set(null, "*", "bfm", bfm);
+        run_test();
     end
 
-endmodule : simple_uart_switch_tb
+endmodule : top

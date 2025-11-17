@@ -1,12 +1,19 @@
-class scoreboard;
+class scoreboard extends uvm_component;
+
+    `uvm_component_utils(scoreboard)
 
     protected virtual bfm_if bfm;
     protected int unsigned passed_tests = 0;
     protected int unsigned failed_tests = 0;
 
-    function new(virtual bfm_if b);
-        bfm = b;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
     endfunction : new
+
+    function void build_phase(uvm_phase phase);
+        if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
+            `uvm_fatal("SB", "Failed to get BFM from config DB")
+    endfunction : build_phase
 
     protected function automatic int get_expected_port(input logic [7:0] addr);
         foreach (routing_table[i]) begin
@@ -247,13 +254,13 @@ class scoreboard;
         end
     endtask : monitor_transactions
 
-    task execute();
+    task run_phase(uvm_phase phase);
         fork
             monitor_transactions();
         join_none
-    endtask : execute
+    endtask : run_phase
 
-    function void print_result();
+    function void report_phase(uvm_phase phase);
         static string green_esc = "\033[1;32m";
         static string red_esc   = "\033[1;31m";
         static string reset_esc = "\033[0m";
@@ -262,6 +269,6 @@ class scoreboard;
         $display("%sPASSED=%0d%s", green_esc, passed_tests, reset_esc);
         $display("%sFAILED=%0d%s", red_esc, failed_tests, reset_esc);
         $write("\n");
-    endfunction : print_result
+    endfunction : report_phase
 
 endclass : scoreboard

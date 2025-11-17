@@ -1,13 +1,54 @@
-class tpgen;
+virtual class base_tpgen extends uvm_component;
 
+    // The macro is not there as we never instantiate/use the base_tpgen
+
+    //------------------------------------------------------------------------------
+    // local variables
+    //------------------------------------------------------------------------------
     protected virtual bfm_if bfm;
     protected scoreboard scoreboard_h;
 
-    function new(virtual bfm_if b, scoreboard sb);
-        bfm          = b;
-        scoreboard_h = sb;
+    //------------------------------------------------------------------------------
+    // constructor
+    //------------------------------------------------------------------------------
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
     endfunction : new
 
+    function void build_phase(uvm_phase phase);
+        if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
+            `uvm_fatal("TPGEN", "Failed to get BFM")
+
+        // Fetch the scoreboard published by the environment. Using "this" as the
+        // accessor scope ensures we look relative to the current component's path
+        // (env.env_h.tpgen_h) instead of relying on a global search, which could
+        // fail if wildcard resolution differs between tools.
+        if(!uvm_config_db#(scoreboard)::get(this, "", "scoreboard", scoreboard_h))
+            `uvm_fatal("TPGEN", "Failed to get scoreboard handle")
+    endfunction : build_phase
+
+    //------------------------------------------------------------------------------
+    // function prototypes
+    //------------------------------------------------------------------------------
+    pure virtual protected task drive_stimulus();
+
+    //------------------------------------------------------------------------------
+    // run phase
+    //------------------------------------------------------------------------------
+    task run_phase(uvm_phase phase);
+        phase.raise_objection(this);
+
+        bfm.reset_switch();
+        bfm.wait_clock_cycles(10);
+
+        drive_stimulus();
+
+        phase.drop_objection(this);
+    endtask : run_phase
+
+    //------------------------------------------------------------------------------
+    // helper tasks shared by generators
+    //------------------------------------------------------------------------------
     protected task add_routing_entry(input logic [7:0] addr, input logic [7:0] port);
         int found = 0;
         foreach (routing_table[i]) begin
@@ -178,180 +219,4 @@ class tpgen;
         end
     endtask : run_uart_manual_case
 
-    task execute();
-        static logic [7:0] addr_sout1 = 8'hFA;
-        static logic [7:0] addr_sout0 = 8'h11;
-        static logic [7:0] data       = 8'hAA;
-
-        bfm.reset_switch();
-        bfm.wait_clock_cycles(10);
-
-        $write ("---------------------------------------------\n");
-        $write ("----------- Programowanie adresow -----------\n");
-        $write ("---------------------------------------------\n");
-
-        program_all_addresses(1);
-
-        sent_frames.delete();
-
-        print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
-        print_routing_table();
-
-        $write ("---------------------------------------------\n");
-        $write ("----------- Faza testowa --------------------\n");
-        $write ("---------------------------------------------\n");
-
-        $display("[%0t] Test forwarding", $time);
-
-        bfm.set_prog(0);
-
-        run_full_forwarding_sweep();
-
-        bfm.wait_clock_cycles(1000);
-
-        bfm.reset_switch();
-        bfm.wait_clock_cycles(10);
-
-        program_all_addresses();
-        print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
-        print_routing_table();
-        sent_frames.delete();
-        bfm.set_prog(0);
-
-        run_full_forwarding_sweep();
-
-        $write ("---------------------------------------------\n");
-        $write ("----------- TEST uszkodzonych ramek ---------\n");
-        $write ("---------------------------------------------\n");
-
-        run_uart_manual_case(
-            "Bledny bit parzystosci danych na sout0",
-            addr_sout0,
-            data,
-            .data_parity_bit(~(^data)),
-            .expect_no_output(1),
-            .data_error(ERR_PARITY_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny start bit danych na sout0",
-            addr_sout0,
-            data,
-            .data_start_bit(1),
-            .expect_no_output(1),
-            .data_error(ERR_START_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny stop bit danych na sout0",
-            addr_sout0,
-            data,
-            .data_stop_bit(0),
-            .expect_no_output(1),
-            .data_error(ERR_STOP_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny bit parzystosci adresu na sout0",
-            addr_sout0,
-            data,
-            .addr_parity_bit(~(^addr_sout0)),
-            .expect_no_output(1),
-            .addr_error(ERR_PARITY_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny start bit adresu na sout0",
-            addr_sout0,
-            data,
-            .addr_start_bit(1),
-            .expect_no_output(1),
-            .addr_error(ERR_START_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny stop bit adresu na sout0",
-            addr_sout0,
-            data,
-            .addr_stop_bit(0),
-            .expect_no_output(1),
-            .addr_error(ERR_STOP_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny bit parzystosci danych na sout1",
-            addr_sout1,
-            data,
-            .data_parity_bit(~(^data)),
-            .expect_no_output(1),
-            .data_error(ERR_PARITY_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny start bit danych na sout1",
-            addr_sout1,
-            data,
-            .data_start_bit(1),
-            .expect_no_output(1),
-            .data_error(ERR_START_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny stop bit danych na sout1",
-            addr_sout1,
-            data,
-            .data_stop_bit(0),
-            .expect_no_output(1),
-            .data_error(ERR_STOP_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny bit parzystosci adresu na sout1",
-            addr_sout1,
-            data,
-            .addr_parity_bit(~(^addr_sout1)),
-            .expect_no_output(1),
-            .addr_error(ERR_PARITY_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny start bit adresu na sout1",
-            addr_sout1,
-            data,
-            .addr_start_bit(1),
-            .expect_no_output(1),
-            .addr_error(ERR_START_BIT)
-        );
-
-        run_uart_manual_case(
-            "Bledny stop bit adresu na sout1",
-            addr_sout1,
-            data,
-            .addr_stop_bit(0),
-            .expect_no_output(1),
-            .addr_error(ERR_STOP_BIT)
-        );
-
-        run_async_reset_case(
-            "Async reset podczas forwarding na sout0",
-            addr_sout0,
-            data
-        );
-
-        bfm.wait_clock_cycles(1000);
-
-        run_async_reset_case(
-            "Async reset podczas forwarding na sout1",
-            addr_sout1,
-            data
-        );
-
-        $display("[%0t] Test zakonczony", $time);
-        print_colored($sformatf("Pokrycie laczne: %.2f%%", $get_coverage()), "yellow");
-
-        repeat(10000)
-            @(posedge bfm.clk);
-        $finish();
-    endtask : execute
-
-endclass : tpgen
+endclass : base_tpgen

@@ -1,5 +1,8 @@
 package uartswitch_tb_pkg;
 
+    import uvm_pkg::*;
+    `include "uvm_macros.svh"
+
     //------------------------------------------------------------------------------
     // Testbench configuration
     //------------------------------------------------------------------------------
@@ -71,6 +74,15 @@ package uartswitch_tb_pkg;
         TEST_FAILED
     } test_result_t;
 
+    typedef enum {
+        COLOR_BOLD_BLACK_ON_GREEN,
+        COLOR_BOLD_BLACK_ON_RED,
+        COLOR_BOLD_BLACK_ON_YELLOW,
+        COLOR_BOLD_BLUE_ON_WHITE,
+        COLOR_BLUE_ON_WHITE,
+        COLOR_DEFAULT
+    } print_color;
+
     //------------------------------------------------------------------------------
     // Utility routines
     //------------------------------------------------------------------------------
@@ -90,10 +102,37 @@ package uartswitch_tb_pkg;
         $display("%s%s\033[0m", esc, msg);
     endtask
 
-`include "tb_classes/coverage.svh"
-`include "tb_classes/scoreboard.svh"
-`include "tb_classes/tpgen.svh"
-`include "tb_classes/testbench.svh"
+    function void set_print_color ( print_color c );
+        string ctl;
+        case(c)
+            COLOR_BOLD_BLACK_ON_GREEN : ctl  = "\033\[1;30m\033\[102m";
+            COLOR_BOLD_BLACK_ON_RED : ctl    = "\033\[1;30m\033\[101m";
+            COLOR_BOLD_BLACK_ON_YELLOW : ctl = "\033\[1;30m\033\[103m";
+            COLOR_BOLD_BLUE_ON_WHITE : ctl   = "\033\[1;34m\033\[107m";
+            COLOR_BLUE_ON_WHITE : ctl        = "\033\[0;34m\033\[107m";
+            COLOR_DEFAULT : ctl              = "\033\[0m\n";
+            default : begin
+                $error("set_print_color: bad argument");
+                ctl                          = "";
+            end
+        endcase
+        $write(ctl);
+    endfunction
 
+    //------------------------------------------------------------------------------
+    // Testbench classes
+    //------------------------------------------------------------------------------
+    `include "tb_classes/coverage.svh"
+    `include "tb_classes/scoreboard.svh"
+    `include "tb_classes/base_tpgen.svh"
+    `include "tb_classes/random_tpgen.svh"
+    `include "tb_classes/add_tpgen.svh"
+    `include "tb_classes/env.svh"
+
+    //------------------------------------------------------------------------------
+    // Test classes
+    //------------------------------------------------------------------------------
+    `include "tb_classes/random_test.svh"
+    `include "tb_classes/add_test.svh"
 
 endpackage : uartswitch_tb_pkg
