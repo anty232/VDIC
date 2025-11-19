@@ -32,6 +32,14 @@ virtual class base_tpgen extends uvm_component;
     //------------------------------------------------------------------------------
     pure virtual protected task drive_stimulus();
 
+
+    //------------------------------------------------------------------------------
+    // random data helper
+    //------------------------------------------------------------------------------
+    protected function automatic logic [7:0] generate_random_data();
+        return $urandom_range(8'h00, 8'hFF);
+    endfunction : generate_random_data
+    
     //------------------------------------------------------------------------------
     // run phase
     //------------------------------------------------------------------------------
