@@ -5,6 +5,11 @@ class scoreboard extends uvm_component;
     protected virtual bfm_if bfm;
     protected int unsigned passed_tests = 0;
     protected int unsigned failed_tests = 0;
+    protected command_monitor command_monitor_h;
+    protected result_monitor  result_monitor_h;
+    protected time            timeout_cycles = TIMEOUT_CYCLES;
+    protected input_transaction_t current_tx;
+
     uvm_analysis_imp_cmd #(input_transaction_t, scoreboard) cmd_imp;
     uvm_analysis_imp_result #(result_packet_t, scoreboard) result_imp;
 
@@ -18,6 +23,14 @@ class scoreboard extends uvm_component;
     function void build_phase(uvm_phase phase);
         if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
             `uvm_fatal("SB", "Failed to get BFM from config DB")
+
+        if(!uvm_config_db#(command_monitor)::get(null, "*", "command_monitor_h", command_monitor_h))
+            `uvm_fatal("SB", "Failed to get command monitor from config DB")
+
+        if(!uvm_config_db#(result_monitor)::get(null, "*", "result_monitor_h", result_monitor_h))
+            `uvm_fatal("SB", "Failed to get result monitor from config DB")
+
+
 
         cmd_imp    = new("cmd_imp", this);
         result_imp = new("result_imp", this);
@@ -43,6 +56,220 @@ class scoreboard extends uvm_component;
         return -1;
     endfunction : get_expected_port
 
+    task automatic wait_for_output_capture(input int port);
+        case (port)
+            0: if (!capture_done_sout0) @(sout0_capture_done_ev);
+            1: if (!capture_done_sout1) @(sout1_capture_done_ev);
+            default: ;
+        endcase
+    endtask
+
+    task automatic wait_for_input_transaction();
+        @(input_capture_done_ev);
+    endtask
+
+    task automatic wait_for_next_start_bit(
+        ref logic serial_line,
+        input string port_name,
+        output bit start_found
+    );
+        longint wait_limit = timeout_cycles;
+        start_found = 0;
+
+        while (wait_limit > 0) begin
+            bit prev_local = serial_line;
+            @(posedge bfm.clk);
+            wait_limit--;
+            if (prev_local === 1 && serial_line === 0) begin
+                start_found = 1;
+                return;
+            end
+        end
+
+        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
+                                $time, port_name), "yellow");
+    endtask
+
+    task automatic collect_uart_frames(
+        ref logic serial_line,
+        input string port_name,
+        ref uart_frame_t frame_queue[$],
+        input bit warn_incomplete
+    );
+        bit start_found;
+
+        frame_queue.delete();
+
+        for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+            uart_frame_t frame;
+
+            if (frame_idx == 0) begin
+                frame.start_bit = serial_line;
+            end
+            else begin
+                wait_for_next_start_bit(serial_line, port_name, start_found);
+                if (!start_found)
+                    break;
+
+                frame.start_bit = serial_line;
+            end
+
+            for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                repeat (CLKS_PER_BIT) @(posedge bfm.clk);
+                frame.data[bit_index] = serial_line;
+            end
+
+            repeat (CLKS_PER_BIT) @(posedge bfm.clk);
+            frame.parity = serial_line;
+
+            repeat (CLKS_PER_BIT) @(posedge bfm.clk);
+            frame.stop_bit = serial_line;
+
+            frame_queue.push_back(frame);
+        end
+
+        if (frame_queue.size() < MONITOR_FRAMES && warn_incomplete) begin
+            print_colored($sformatf(
+                                "[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d na %s",
+                                $time, MONITOR_FRAMES, frame_queue.size(), port_name),
+                          "yellow");
+        end
+    endtask
+
+    task automatic monitor_uart_output(
+        input string port_name,
+        ref logic serial_line,
+        ref bit capture_done,
+        ref uart_frame_t frame_queue[$]
+    );
+        bit prev;
+        bit timed_out;
+
+        forever begin
+            prev = 1'b1;
+
+            fork
+                begin : WAIT_START
+                    forever begin
+                        @(posedge bfm.clk);
+                        if (prev === 1 && serial_line === 0) begin
+                            disable TIMEOUT;
+                            $display("[%0t] Start bit wykryty na %s", $time, port_name);
+
+                            capture_done = 0;
+                            collect_uart_frames(serial_line, port_name, frame_queue, 1'b1);
+
+                            capture_done = 1;
+                            if (port_name == "sout0")
+                                -> sout0_capture_done_ev;
+                            else if (port_name == "sout1")
+                                -> sout1_capture_done_ev;
+                            $display("[%0t] Akwizycja zakonczona, zebrano %0d ramek",
+                                     $time, frame_queue.size());
+
+                            foreach (frame_queue[i])
+                                $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
+                            $write("\n");
+
+                            timed_out = 0;
+                            disable TIMEOUT;
+                            disable WAIT_START;
+                        end
+                        prev = serial_line;
+                    end
+                end
+
+                begin : TIMEOUT
+                    repeat (timeout_cycles) @(posedge bfm.clk);
+                    capture_done = 1;
+                    if (port_name == "sout0")
+                        -> sout0_capture_done_ev;
+                    else if (port_name == "sout1")
+                        -> sout1_capture_done_ev;
+                    print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
+                                            $time, port_name, timeout_cycles), "yellow");
+                    timed_out = 1;
+                    disable WAIT_START;
+                end
+
+                if (result_monitor_h != null) begin
+                    result_packet_t pkt;
+
+                    pkt.port      = (port_name == "sout0") ? 0 : 1;
+                    pkt.frames    = frame_queue;
+                    pkt.timed_out = timed_out;
+
+                    result_monitor_h.write_to_monitor(pkt);
+                end
+            join
+        end
+    endtask
+
+    task automatic monitor_uart_input();
+        bit prev;
+
+        forever begin
+            wait (input_capture_enable);
+
+            prev = 1'b1;
+
+            fork
+                begin : WAIT_START_SIN
+                    forever begin
+                        @(posedge bfm.clk);
+
+                        if (!input_capture_enable)
+                            disable WAIT_START_SIN;
+
+                        if (prev === 1 && bfm.sin === 0) begin
+                            disable TIMEOUT_SIN;
+
+                            collect_uart_frames(bfm.sin, "sin", captured_frames_sin, 1'b0);
+
+                            capture_done_sin     = 1;
+                            input_capture_enable = 0;
+
+                            current_tx.frames = captured_frames_sin;
+                            current_tx.valid  = 1;
+
+                            -> input_capture_done_ev;
+
+                            if (command_monitor_h != null)
+                                command_monitor_h.write_to_monitor(current_tx);
+
+                            disable WAIT_START_SIN;
+                        end
+
+                        prev = bfm.sin;
+                    end
+                end
+
+                begin : TIMEOUT_SIN
+                    repeat (timeout_cycles) @(posedge bfm.clk);
+                    if (input_capture_enable) begin
+                        capture_done_sin     = 1;
+                        captured_frames_sin.delete();
+                        current_tx.frames = captured_frames_sin;
+                        current_tx.valid  = 1;
+                        input_capture_enable = 0;
+                        print_colored($sformatf(
+                            "[%0t] Timeout na sin  brak start bitu w ciagu %0d cykli",
+                            $time,
+                            timeout_cycles
+                        ), "yellow");
+                        -> input_capture_done_ev;
+
+                        if (command_monitor_h != null)
+                            command_monitor_h.write_to_monitor(current_tx);
+
+                    end
+                    disable WAIT_START_SIN;
+                end
+            join
+        end
+    endtask
+
+
     task begin_transaction(
         input string test_name,
         input logic [7:0] addr,
@@ -52,14 +279,14 @@ class scoreboard extends uvm_component;
         wait (scoreboard_ready_for_next == 1);
         scoreboard_ready_for_next = 0;
 
-        bfm.current_tx.test_name        = test_name;
-        bfm.current_tx.addr             = addr;
-        bfm.current_tx.expect_no_output = expect_no_output;
-        bfm.current_tx.frames.delete();
-        bfm.current_tx.valid            = 0;
+        current_tx.test_name        = test_name;
+        current_tx.addr             = addr;
+        current_tx.expect_no_output = expect_no_output;
+        current_tx.frames.delete();
+        current_tx.valid            = 0;
 
         port = get_expected_port(addr);
-        bfm.current_tx.port = port;
+        current_tx.port = port;
 
         if (port == -1) begin
             print_colored($sformatf(
@@ -164,11 +391,11 @@ class scoreboard extends uvm_component;
     );
         case (tx.port)
             0: begin
-                bfm.wait_for_output_capture(0);
+                wait_for_output_capture(0);
                 compare_frames(captured_frames_sout0, tx.frames);
             end
             1: begin
-                bfm.wait_for_output_capture(1);
+                wait_for_output_capture(1);
                 compare_frames(captured_frames_sout1, tx.frames);
             end
             default:
@@ -184,11 +411,11 @@ class scoreboard extends uvm_component;
 
         case (tx.port)
             0: begin
-                bfm.wait_for_output_capture(0);
+                wait_for_output_capture(0);
                 frames_to_report = captured_frames_sout0;
             end
             1: begin
-                bfm.wait_for_output_capture(1);
+                wait_for_output_capture(1);
                 frames_to_report = captured_frames_sout1;
             end
             default: begin
@@ -260,6 +487,18 @@ class scoreboard extends uvm_component;
 
     task run_phase(uvm_phase phase);
         fork
+            begin : monitor_sout0
+                monitor_uart_output("sout0", bfm.sout0, capture_done_sout0, captured_frames_sout0);
+            end : monitor_sout0
+
+            begin : monitor_sout1
+                monitor_uart_output("sout1", bfm.sout1, capture_done_sout1, captured_frames_sout1);
+            end : monitor_sout1
+
+            begin : monitor_sin
+                monitor_uart_input();
+            end : monitor_sin
+
             begin : process_cmds
                 input_transaction_t tx;
 

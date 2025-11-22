@@ -4,7 +4,7 @@ class command_monitor extends uvm_component;
     //------------------------------------------------------------------------------
     // local variables
     //------------------------------------------------------------------------------
-    protected virtual bfm_if bfm;
+
     uvm_analysis_port #(input_transaction_t) ap;
 
     //------------------------------------------------------------------------------
@@ -25,10 +25,6 @@ class command_monitor extends uvm_component;
     // build phase
     //------------------------------------------------------------------------------
     function void build_phase(uvm_phase phase);
-        if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
-            `uvm_fatal("CMD_MON", "Failed to get BFM")
-
-        bfm.command_monitor_h = this;
         ap                    = new("ap", this);
     endfunction : build_phase
 

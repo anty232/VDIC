@@ -145,14 +145,14 @@ package uartswitch_tb_pkg;
     //------------------------------------------------------------------------------
     // Testbench classes
     //------------------------------------------------------------------------------
-    `include "tb_classes/coverage.svh"
+    `include "tb_classes/command_monitor.svh"
+    `include "tb_classes/result_monitor.svh"
     `include "tb_classes/scoreboard.svh"
+    `include "tb_classes/coverage.svh"
     `include "tb_classes/base_tpgen.svh"
     `include "tb_classes/random_tpgen.svh"
     `include "tb_classes/add_tpgen.svh"
     `include "tb_classes/driver.svh"
-    `include "tb_classes/command_monitor.svh"
-    `include "tb_classes/result_monitor.svh"
     `include "tb_classes/env.svh"
 
     //------------------------------------------------------------------------------

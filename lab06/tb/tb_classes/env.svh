@@ -26,10 +26,11 @@ class env extends uvm_env;
         super.build_phase(phase);
 
         // Tworzymy elementy TB przez fabrykę
-        scoreboard_h      = scoreboard     ::type_id::create("scoreboard_h",      this);
+        
         coverage_h        = coverage       ::type_id::create("coverage_h",        this);
         command_monitor_h = command_monitor::type_id::create("command_monitor_h", this);
         result_monitor_h  = result_monitor ::type_id::create("result_monitor_h",  this);
+        scoreboard_h      = scoreboard     ::type_id::create("scoreboard_h",      this);
         driver_h          = driver         ::type_id::create("driver_h",          this);
         tpgen_h           = random_tpgen   ::type_id::create("tpgen_h",           this);
 
@@ -38,6 +39,8 @@ class env extends uvm_env;
 
         // Udostępniamy scoreboard do tpgen (base_tpgen pobiera go przez config_db)
         uvm_config_db#(scoreboard)::set(this, "*", "scoreboard", scoreboard_h);
+        uvm_config_db#(command_monitor)::set(null, "*", "command_monitor_h", command_monitor_h);
+        uvm_config_db#(result_monitor)::set(null, "*", "result_monitor_h", result_monitor_h);
     endfunction : build_phase
 
     //------------------------------------------------------------------------------
