@@ -27,7 +27,7 @@ class add_tpgen extends random_tpgen;
         run_uart_packet_case("edge_addres_max", addr_max, data, 0);
         run_uart_packet_case("edge_addres_min", addr_min, data, 0);
 
-        bfm.wait_clock_cycles(1000);
+        bfm.wait_clock_cycles(2000);
 
         //bfm.reset_switch();
         //bfm.wait_clock_cycles(10);

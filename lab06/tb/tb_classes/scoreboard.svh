@@ -5,6 +5,11 @@ class scoreboard extends uvm_component;
     protected virtual bfm_if bfm;
     protected int unsigned passed_tests = 0;
     protected int unsigned failed_tests = 0;
+    uvm_analysis_imp_cmd #(input_transaction_t, scoreboard) cmd_imp;
+    uvm_analysis_imp_result #(result_packet_t, scoreboard) result_imp;
+
+    uvm_tlm_analysis_fifo #(input_transaction_t) cmd_fifo;
+    uvm_tlm_analysis_fifo #(result_packet_t)     result_fifo;
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
@@ -13,7 +18,22 @@ class scoreboard extends uvm_component;
     function void build_phase(uvm_phase phase);
         if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
             `uvm_fatal("SB", "Failed to get BFM from config DB")
+
+        cmd_imp    = new("cmd_imp", this);
+        result_imp = new("result_imp", this);
+
+        cmd_fifo    = new("cmd_fifo", this);
+        result_fifo = new("result_fifo", this);
+
     endfunction : build_phase
+
+    function void write_cmd(input_transaction_t tx);
+        cmd_fifo.write(tx);
+    endfunction : write_cmd
+
+    function void write_result(result_packet_t pkt);
+        result_fifo.write(pkt);
+    endfunction : write_result
 
     protected function automatic int get_expected_port(input logic [7:0] addr);
         foreach (routing_table[i]) begin
@@ -71,12 +91,6 @@ class scoreboard extends uvm_component;
     protected task complete_transaction();
         scoreboard_ready_for_next = 1;
     endtask : complete_transaction
-
-    protected task get_last_transaction(output input_transaction_t tx);
-        tx = bfm.current_tx;
-        bfm.current_tx.frames.delete();
-        bfm.current_tx.valid = 0;
-    endtask : get_last_transaction
 
     protected task record_test_result(
         input test_result_t result,
@@ -244,20 +258,32 @@ class scoreboard extends uvm_component;
         complete_transaction();
     endtask : process_transaction
 
-    protected task monitor_transactions();
-        input_transaction_t tx;
-
-        forever begin
-            bfm.wait_for_input_transaction();
-            get_last_transaction(tx);
-            process_transaction(tx);
-        end
-    endtask : monitor_transactions
-
     task run_phase(uvm_phase phase);
         fork
-            monitor_transactions();
-        join_none
+            begin : process_cmds
+                input_transaction_t tx;
+
+                forever begin
+                    cmd_fifo.get(tx);
+                    process_transaction(tx);
+                end
+            end : process_cmds
+
+            begin : process_results
+                result_packet_t pkt;
+
+                forever begin
+                    result_fifo.get(pkt);
+
+                    if (pkt.timed_out) begin
+                        print_colored($sformatf(
+                            "[%0t] Timeout raportowany przez monitor dla port%0d",
+                            $time, pkt.port
+                        ), "yellow");
+                    end
+                end
+            end : process_results
+        join
     endtask : run_phase
 
     function void report_phase(uvm_phase phase);

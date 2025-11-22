@@ -1,0 +1,47 @@
+class driver extends uvm_component;
+    `uvm_component_utils(driver)
+
+    //------------------------------------------------------------------------------
+    // local variables
+    //------------------------------------------------------------------------------
+    protected virtual bfm_if bfm;
+    uvm_get_port #(driver_command_t) command_port;
+
+    //------------------------------------------------------------------------------
+    // constructor
+    //------------------------------------------------------------------------------
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction : new
+
+    //------------------------------------------------------------------------------
+    // build phase
+    //------------------------------------------------------------------------------
+    function void build_phase(uvm_phase phase);
+        if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
+            `uvm_fatal("DRV", "Failed to get BFM")
+
+        command_port = new("command_port", this);
+    endfunction : build_phase
+
+    //------------------------------------------------------------------------------
+    // run phase
+    //------------------------------------------------------------------------------
+    task run_phase(uvm_phase phase);
+        driver_command_t cmd;
+
+        forever begin
+            command_port.get(cmd);
+
+            if (cmd.use_custom_bits) begin
+                bfm.send_uart_byte_custom(cmd.addr_start_bit, cmd.addr, cmd.addr_parity_bit, cmd.addr_stop_bit);
+                bfm.send_uart_byte_custom(cmd.data_start_bit, cmd.data, cmd.data_parity_bit, cmd.data_stop_bit);
+            end
+            else begin
+                bfm.send_uart_byte(cmd.addr);
+                bfm.send_uart_byte(cmd.data);
+            end
+        end
+    endtask : run_phase
+
+endclass : driver

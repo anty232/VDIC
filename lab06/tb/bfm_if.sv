@@ -2,6 +2,13 @@ interface bfm_if;
     import uartswitch_tb_pkg::*;
 
     //------------------------------------------------------------------------------
+    // Monitor handles
+    //------------------------------------------------------------------------------
+    command_monitor command_monitor_h;
+    result_monitor  result_monitor_h;
+
+
+    //------------------------------------------------------------------------------
     // DUT connections
     //------------------------------------------------------------------------------
     logic clk;
@@ -29,9 +36,6 @@ interface bfm_if;
     frame_error_t  cov_err_error_type;
     int            cov_rst_port;
 
-    event forwarding_sample_ev;
-    event reset_sample_ev;
-    event error_sample_ev;
 
     //------------------------------------------------------------------------------
     // Clock generator and default values
@@ -141,37 +145,6 @@ interface bfm_if;
     endtask
 
     //------------------------------------------------------------------------------
-    // Coverage triggers
-    //------------------------------------------------------------------------------
-    task automatic trigger_forwarding_cov(
-        input logic [7:0] addr,
-        input logic [7:0] data,
-        input int port
-    );
-        cov_addr = addr;
-        cov_data = data;
-        cov_port = port;
-        -> forwarding_sample_ev;
-    endtask
-
-    task automatic trigger_reset_cov(input int port);
-        cov_rst_port = port;
-        -> reset_sample_ev;
-    endtask
-
-    task automatic trigger_error_cov(
-        input frame_kind_t frame_kind,
-        input frame_error_t error_type
-    );
-        if (error_type != ERR_NONE) begin
-            cov_err_frame_kind = frame_kind;
-            cov_err_error_type = error_type;
-            -> error_sample_ev;
-        end
-    endtask
-
-
-    //------------------------------------------------------------------------------
     // Monitor helpers
     //------------------------------------------------------------------------------
 
@@ -251,9 +224,11 @@ interface bfm_if;
         ref uart_frame_t frame_queue[$]
     );
         bit prev;
+        bit timed_out;
 
         forever begin
             prev = 1'b1;
+            
 
             fork
                 begin : WAIT_START
@@ -278,6 +253,7 @@ interface bfm_if;
                                 $display("    Frame %0d: %s", i, frame_to_string(frame_queue[i]));
                             $write("\n");
 
+                            timed_out = 0;
                             disable TIMEOUT;
                             disable WAIT_START;
                         end
@@ -294,7 +270,18 @@ interface bfm_if;
                         -> sout1_capture_done_ev;
                     print_colored($sformatf("[%0t] Timeout na %s  brak start bitu w ciagu %0d cykli",
                                             $time, port_name, timeout_cycles), "yellow");
+                    timed_out = 1;
                     disable WAIT_START;
+                end
+
+                if (result_monitor_h != null) begin
+                    result_packet_t pkt;
+    
+                    pkt.port      = (port_name == "sout0") ? 0 : 1;
+                    pkt.frames    = frame_queue;
+                    pkt.timed_out = timed_out;
+    
+                    result_monitor_h.write_to_monitor(pkt);
                 end
             join
         end
@@ -329,6 +316,10 @@ interface bfm_if;
 
                             -> input_capture_done_ev;
 
+                            if (command_monitor_h != null)
+                                command_monitor_h.write_to_monitor(current_tx);
+
+
                             disable WAIT_START_SIN;
                         end
 
@@ -350,6 +341,10 @@ interface bfm_if;
                             timeout_cycles
                         ), "yellow");
                         -> input_capture_done_ev;
+
+                        if (command_monitor_h != null)
+                        command_monitor_h.write_to_monitor(current_tx);
+
                     end
                     disable WAIT_START_SIN;
                 end

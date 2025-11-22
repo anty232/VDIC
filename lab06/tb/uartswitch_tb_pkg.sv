@@ -1,7 +1,11 @@
+
+
 package uartswitch_tb_pkg;
 
     import uvm_pkg::*;
     `include "uvm_macros.svh"
+    `uvm_analysis_imp_decl(_cmd)
+    `uvm_analysis_imp_decl(_result)
 
     //------------------------------------------------------------------------------
     // Testbench configuration
@@ -41,6 +45,19 @@ package uartswitch_tb_pkg;
 
     routing_entry_t routing_table[$];
 
+    typedef struct {
+        logic [7:0] addr;
+        logic [7:0] data;
+        bit         use_custom_bits;
+        bit         addr_start_bit;
+        bit         data_start_bit;
+        bit         addr_parity_bit;
+        bit         data_parity_bit;
+        bit         addr_stop_bit;
+        bit         data_stop_bit;
+    } driver_command_t;
+
+
     //------------------------------------------------------------------------------
     // Shared scoreboard/monitor state
     //------------------------------------------------------------------------------
@@ -68,6 +85,12 @@ package uartswitch_tb_pkg;
         uart_frame_t  frames[$];
         bit           valid;
     } input_transaction_t;
+
+    typedef struct {
+        int          port;
+        uart_frame_t frames[$];
+        bit          timed_out;
+    } result_packet_t;
 
     typedef enum bit {
         TEST_PASSED,
@@ -127,6 +150,9 @@ package uartswitch_tb_pkg;
     `include "tb_classes/base_tpgen.svh"
     `include "tb_classes/random_tpgen.svh"
     `include "tb_classes/add_tpgen.svh"
+    `include "tb_classes/driver.svh"
+    `include "tb_classes/command_monitor.svh"
+    `include "tb_classes/result_monitor.svh"
     `include "tb_classes/env.svh"
 
     //------------------------------------------------------------------------------
