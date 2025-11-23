@@ -16,7 +16,7 @@ class random_tpgen extends base_tpgen;
         program_all_addresses();
         print_colored("Programowanie zakonczone  przejscie do testu ramek uszkodzonych\n", "yellow");
         //print_routing_table();
-        bfm.set_prog(0);
+        //bfm.set_prog(0);
 
         for (int addr_idx = 0; addr_idx < NUM_ADDRS; addr_idx++) begin
             logic [7:0] addr_local = addr_idx[7:0];
@@ -26,7 +26,7 @@ class random_tpgen extends base_tpgen;
             bfm.wait_clock_cycles(5);
         end
 
-        bfm.wait_clock_cycles(1000);
+        //bfm.wait_clock_cycles(10000);
     endtask : drive_stimulus
 
 endclass : random_tpgen

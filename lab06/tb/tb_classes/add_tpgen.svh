@@ -17,17 +17,21 @@ class add_tpgen extends random_tpgen;
         static logic [7:0] data     = 8'hAA;
 
         program_all_addresses(1);
-        sent_frames.delete();
+        //sent_frames.delete();
         print_colored("Programowanie zakonczone  przejscie do testu max_min\n", "yellow");
         //print_routing_table();
-
-        bfm.set_prog(0);
+ 
+        //bfm.set_prog(0);
         //run_full_forwarding_sweep();
 
-        run_uart_packet_case("edge_addres_max", addr_max, data, 0);
-        run_uart_packet_case("edge_addres_min", addr_min, data, 0);
+        bfm.wait_clock_cycles(10000);
 
-        bfm.wait_clock_cycles(2000);
+        run_uart_packet_case("edge_addres_max", addr_max, data, 1);
+        run_uart_packet_case("edge_addres_min", addr_min, data, 1);
+        
+
+
+        bfm.wait_clock_cycles(30000);
 
         //bfm.reset_switch();
         //bfm.wait_clock_cycles(10);

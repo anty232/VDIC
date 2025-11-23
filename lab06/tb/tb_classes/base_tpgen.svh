@@ -6,7 +6,7 @@ virtual class base_tpgen extends uvm_component;
     // local variables
     //------------------------------------------------------------------------------
     protected virtual bfm_if bfm;
-    protected scoreboard scoreboard_h;
+
     uvm_blocking_put_port #(driver_command_t) command_port;
 
     //------------------------------------------------------------------------------
@@ -19,9 +19,6 @@ virtual class base_tpgen extends uvm_component;
     function void build_phase(uvm_phase phase);
         if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
             `uvm_fatal("TPGEN", "Failed to get BFM")
-
-        if(!uvm_config_db#(scoreboard)::get(this, "", "scoreboard", scoreboard_h))
-            `uvm_fatal("TPGEN", "Failed to get scoreboard handle")
 
         command_port = new("command_port", this);
     endfunction : build_phase
@@ -39,6 +36,14 @@ virtual class base_tpgen extends uvm_component;
         return $urandom_range(int'(8'hFF), int'(8'h00));
     endfunction : generate_random_data
     
+    protected function automatic int get_expected_port(input logic [7:0] addr);
+        foreach (routing_table[i]) begin
+            if (routing_table[i].addr == addr)
+                return routing_table[i].port;
+        end
+        return -1;
+    endfunction : get_expected_port
+
     //------------------------------------------------------------------------------
     // run phase
     //------------------------------------------------------------------------------
@@ -108,6 +113,7 @@ virtual class base_tpgen extends uvm_component;
             bfm.wait_clock_cycles(5);
         end
         print_colored("Programowanie tras zakonczone", "yellow");
+        bfm.prog = 0;
     endtask : program_all_addresses
 
     
@@ -118,7 +124,7 @@ virtual class base_tpgen extends uvm_component;
         input bit verbose = 1
     );
         int port;
-        scoreboard_h.begin_transaction(test_name, addr, 0, port);
+        port = get_expected_port(addr);
         if (port == -1)
             return;
 

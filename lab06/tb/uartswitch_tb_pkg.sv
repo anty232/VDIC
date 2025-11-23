@@ -59,28 +59,18 @@ package uartswitch_tb_pkg;
 
 
     //------------------------------------------------------------------------------
-    // Shared scoreboard/monitor state
+    // Shared stimulus bookkeeping
     //------------------------------------------------------------------------------
-    event input_capture_done_ev;
-    event sout0_capture_done_ev;
-    event sout1_capture_done_ev;
 
-    bit input_capture_enable      = 0;
-    bit scoreboard_ready_for_next = 1;
 
-    uart_frame_t sent_frames[$];
-    uart_frame_t captured_frames_sout0[$];
-    uart_frame_t captured_frames_sout1[$];
-    uart_frame_t captured_frames_sin[$];
+    //uart_frame_t sent_frames[$];
 
-    bit capture_done_sout0 = 0;
-    bit capture_done_sout1 = 0;
-    bit capture_done_sin   = 0;
 
     typedef struct {
         string        test_name;
         logic [7:0]   addr;
         bit           expect_no_output;
+        bit           from_programming;
         int           port;
         uart_frame_t  frames[$];
         bit           valid;

@@ -37,8 +37,6 @@ class env extends uvm_env;
         // FIFO pomiędzy tpgen a driverem
         command_f = new("command_f", this);
 
-        // Udostępniamy scoreboard do tpgen (base_tpgen pobiera go przez config_db)
-        uvm_config_db#(scoreboard)::set(this, "*", "scoreboard", scoreboard_h);
         uvm_config_db#(command_monitor)::set(null, "*", "command_monitor_h", command_monitor_h);
         uvm_config_db#(result_monitor)::set(null, "*", "result_monitor_h", result_monitor_h);
     endfunction : build_phase

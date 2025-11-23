@@ -84,7 +84,7 @@ interface bfm_if;
         sin = frame.parity; #(CLK_PERIOD*CLKS_PER_BIT);
         sin = frame.stop_bit; #(CLK_PERIOD*CLKS_PER_BIT);
 
-        sent_frames.push_back(frame);
+        //sent_frames.push_back(frame);
     endtask
 
     task automatic send_uart_byte_custom(
@@ -108,7 +108,7 @@ interface bfm_if;
         sin = frame.parity; #(CLK_PERIOD*CLKS_PER_BIT);
         sin = frame.stop_bit; #(CLK_PERIOD*CLKS_PER_BIT);
 
-        sent_frames.push_back(frame);
+        //sent_frames.push_back(frame);
     endtask
     
 endinterface : bfm_if
