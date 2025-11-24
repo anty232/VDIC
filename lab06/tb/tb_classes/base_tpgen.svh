@@ -113,7 +113,7 @@ virtual class base_tpgen extends uvm_component;
             bfm.wait_clock_cycles(5);
         end
         print_colored("Programowanie tras zakonczone", "yellow");
-        bfm.prog = 0;
+        //bfm.prog = 0;
     endtask : program_all_addresses
 
     

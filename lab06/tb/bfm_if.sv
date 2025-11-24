@@ -11,6 +11,18 @@ interface bfm_if;
     logic sout0;
     logic sout1;
 
+
+    //------------------------------------------------------------------------------
+    // Monitor callbacks
+    //------------------------------------------------------------------------------
+    command_monitor command_monitor_h;
+    result_monitor  result_monitor_h;
+
+    //------------------------------------------------------------------------------
+    // Configuration
+    //------------------------------------------------------------------------------
+    time timeout_cycles = TIMEOUT_CYCLES;
+
  /*
     //------------------------------------------------------------------------------
     // Coverage signaling
@@ -110,5 +122,173 @@ interface bfm_if;
 
         //sent_frames.push_back(frame);
     endtask
-    
+
+    //------------------------------------------------------------------------------
+    // Helper routines for monitoring
+    //------------------------------------------------------------------------------
+    function automatic int get_expected_port(input logic [7:0] addr);
+        foreach (routing_table[i]) begin
+            if (routing_table[i].addr == addr)
+                return routing_table[i].port;
+        end
+        return -1;
+    endfunction : get_expected_port
+
+    task automatic wait_for_next_start_bit(
+        ref logic serial_line,
+        input string port_name,
+        output bit start_found
+    );
+        longint wait_limit = timeout_cycles;
+        start_found = 0;
+
+        while (wait_limit > 0) begin
+            bit prev_local = serial_line;
+            @(posedge clk);
+            wait_limit--;
+            if (prev_local === 1 && serial_line === 0) begin
+                start_found = 1;
+                return;
+            end
+        end
+
+        print_colored($sformatf("[%0t] Nie wykryto kolejnego bitu start na %s",
+                                $time, port_name), "yellow");
+    endtask
+
+    task automatic collect_uart_frames(
+        ref logic serial_line,
+        input string port_name,
+        ref uart_frame_t frame_queue[$],
+        input bit warn_incomplete
+    );
+        bit start_found;
+
+        frame_queue.delete();
+
+        for (int frame_idx = 0; frame_idx < MONITOR_FRAMES; frame_idx++) begin
+            uart_frame_t frame;
+
+            if (frame_idx == 0) begin
+                frame.start_bit = serial_line;
+            end
+            else begin
+                wait_for_next_start_bit(serial_line, port_name, start_found);
+                if (!start_found)
+                    break;
+
+                frame.start_bit = serial_line;
+            end
+
+            for (int bit_index = 0; bit_index < 8; bit_index++) begin
+                repeat (CLKS_PER_BIT) @(posedge clk);
+                frame.data[bit_index] = serial_line;
+            end
+
+            repeat (CLKS_PER_BIT) @(posedge clk);
+            frame.parity = serial_line;
+
+            repeat (CLKS_PER_BIT) @(posedge clk);
+            frame.stop_bit = serial_line;
+
+            frame_queue.push_back(frame);
+        end
+
+        if (frame_queue.size() < MONITOR_FRAMES && warn_incomplete) begin
+            print_colored($sformatf(
+                                "[%0t] Ostrzezenie  oczekiwano %0d ramek, zebrano %0d na %s",
+                                $time, MONITOR_FRAMES, frame_queue.size(), port_name),
+                          "yellow");
+        end
+    endtask
+
+    //------------------------------------------------------------------------------
+    // Monitor threads
+    //------------------------------------------------------------------------------
+    task automatic monitor_uart_input();
+        if (prog === 1'b1) begin
+            @(negedge prog);  // koniec programowania
+        end
+        else begin
+            @(posedge prog);  // start programowania
+            @(negedge prog);  // koniec programowania
+        end
+        
+        forever begin
+            input_transaction_t tx;
+            uart_frame_t        frames[$];
+            bit                 start_found;
+
+
+
+
+            wait_for_next_start_bit(sin, "sin", start_found);
+
+            if (!start_found) begin
+                tx.valid = 0;
+                command_monitor_h.write_to_monitor(tx);
+                continue;
+            end
+
+            collect_uart_frames(sin, "sin", frames, 1'b0);
+
+            tx.frames           = frames;
+            tx.addr             = (frames.size() > 0) ? frames[0].data : '0;
+            tx.port             = get_expected_port(tx.addr);
+            tx.test_name        = $sformatf("captured_tx_%0t", $time);
+            tx.valid            = (frames.size() > 0);
+            tx.expect_no_output = (tx.port == -1);
+
+            command_monitor_h.write_to_monitor(tx);
+        end
+    endtask : monitor_uart_input
+
+    task automatic monitor_uart_output(
+        input string port_name,
+        ref logic serial_line,
+        input int port
+    );
+        forever begin
+            result_packet_t pkt;
+            uart_frame_t    frames[$];
+            bit             start_found;
+
+
+            if (prog) begin
+                wait (!prog);
+            end
+
+            wait_for_next_start_bit(serial_line, port_name, start_found);
+
+            if (!start_found) begin
+                pkt.port      = port;
+                pkt.frames    = frames;
+                pkt.timed_out = 1'b1;
+                result_monitor_h.write_to_monitor(pkt);
+                continue;
+            end
+
+            collect_uart_frames(serial_line, port_name, frames, 1'b1);
+
+            pkt.port      = port;
+            pkt.frames    = frames;
+            pkt.timed_out = 1'b0;
+
+            
+            result_monitor_h.write_to_monitor(pkt);
+        end
+    endtask : monitor_uart_output
+
+    initial begin : command_monitor_thread
+        wait (command_monitor_h != null);
+        monitor_uart_input();
+    end
+
+    initial begin : result_monitor_threads
+        wait (result_monitor_h != null);
+        fork
+            monitor_uart_output("sout0", sout0, 0);
+            monitor_uart_output("sout1", sout1, 1);
+        join_none
+    end  
 endinterface : bfm_if

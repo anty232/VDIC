@@ -14,7 +14,7 @@ package uartswitch_tb_pkg;
     localparam int  CLKS_PER_BIT    = 16;
     localparam int  NUM_ADDRS       = 256;
     localparam int  MONITOR_FRAMES  = 2;
-    localparam time TIMEOUT_CYCLES  = 20000;
+    localparam time TIMEOUT_CYCLES  = 500000;
 
     //------------------------------------------------------------------------------
     // Type definitions

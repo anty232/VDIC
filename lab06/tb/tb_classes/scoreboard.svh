@@ -28,8 +28,6 @@ class scoreboard extends uvm_component;
 
     function void write_cmd(input_transaction_t tx);
         cmd_fifo.write(tx);
-        
-
     endfunction : write_cmd
 
     function void write_result(result_packet_t pkt);
@@ -173,18 +171,26 @@ class scoreboard extends uvm_component;
 
     protected task automatic compare_expected_data(input input_transaction_t tx);
         result_packet_t pkt;
-
+    
         pull_result_for_port(tx.port, pkt);
-
+    
+        $display("--- EXPECTED (tx.frames) ---");
+        foreach (tx.frames[i])
+            $display("  TX[%0d] %s", i, frame_to_string(tx.frames[i]));
+    
+        $display("--- RECEIVED (pkt.frames) ---");
+        foreach (pkt.frames[i])
+            $display("  RX[%0d] %s", i, frame_to_string(pkt.frames[i]));
+    
         if (pkt.timed_out) begin
             print_colored($sformatf(
                 "[%0t] Timeout raportowany przez monitor dla port%0d",
                 $time, pkt.port
             ), "yellow");
         end
-
+    
         compare_frames(pkt.frames, tx.frames);
-    endtask : compare_expected_data
+    endtask
 
     protected task automatic process_transaction(input input_transaction_t tx);
         
