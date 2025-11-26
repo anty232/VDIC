@@ -13,8 +13,6 @@ class coverage extends uvm_component;
     // Z command_monitor_h dostajemy input_transaction_t
     uvm_analysis_imp_cmd    #(input_transaction_t, coverage) cmd_imp;
 
-    // Z result_monitor_h dostajemy result_packet_t
-    uvm_analysis_imp_result #(result_packet_t,   coverage)   result_imp;
 
     //----------------------------------------------------------------------------
     // Zmienne pomocnicze do covergroup
@@ -50,21 +48,7 @@ class coverage extends uvm_component;
     endgroup : fwd_cov
 
     
-    covergroup timeout_cov with function sample();
-        option.name = "cg_timeout";
-
-        port_cp : coverpoint cov_port {
-            bins sout0 = {0};
-            bins sout1 = {1};
-        }
-
-        timeout_cp : coverpoint cov_timed_out {
-            bins no_timeout = {0};
-            bins timeout    = {1};
-        }
-
-        timeout_by_port : cross port_cp, timeout_cp;
-    endgroup : timeout_cov
+    
 
     //----------------------------------------------------------------------------
     // Konstruktor
@@ -72,7 +56,6 @@ class coverage extends uvm_component;
     function new(string name, uvm_component parent);
         super.new(name, parent);
         fwd_cov     = new();
-        timeout_cov = new();
     endfunction : new
 
     //----------------------------------------------------------------------------
@@ -82,7 +65,6 @@ class coverage extends uvm_component;
         super.build_phase(phase);
 
         cmd_imp    = new("cmd_imp",    this);
-        result_imp = new("result_imp", this);
     endfunction : build_phase
 
     //----------------------------------------------------------------------------
@@ -108,16 +90,7 @@ class coverage extends uvm_component;
         fwd_cov.sample();
     endfunction : write_cmd
 
-    //----------------------------------------------------------------------------
-    // write_result  wywoływane z result_monitor_h.ap.write(pkt)
-    //----------------------------------------------------------------------------
-    function void write_result(result_packet_t pkt);
-        cov_port       = pkt.port;
-        cov_timed_out  = pkt.timed_out;
-
-        timeout_cov.sample();
-    endfunction : write_result
-
+    
     //----------------------------------------------------------------------------
     // run_phase  nic tu nie robimy, wszystko w write_*()
     //----------------------------------------------------------------------------

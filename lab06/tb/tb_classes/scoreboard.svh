@@ -1,12 +1,11 @@
-class scoreboard extends uvm_component;
+class scoreboard extends uvm_subscriber #(result_packet_t);
 
     `uvm_component_utils(scoreboard)
 
     protected int unsigned passed_tests = 0;
     protected int unsigned failed_tests = 0;
 
-    uvm_analysis_imp_cmd #(input_transaction_t, scoreboard)    cmd_imp;
-    uvm_analysis_imp_result #(result_packet_t, scoreboard) result_imp;
+    
 
     uvm_tlm_analysis_fifo #(input_transaction_t) cmd_fifo;
     uvm_tlm_analysis_fifo #(result_packet_t)     result_fifo;
@@ -19,20 +18,13 @@ class scoreboard extends uvm_component;
     endfunction : new
 
     function void build_phase(uvm_phase phase);
-        cmd_imp    = new("cmd_imp", this);
-        result_imp = new("result_imp", this);
-
         cmd_fifo    = new("cmd_fifo", this);
         result_fifo = new("result_fifo", this);
     endfunction : build_phase
 
-    function void write_cmd(input_transaction_t tx);
-        cmd_fifo.write(tx);
-    endfunction : write_cmd
-
-    function void write_result(result_packet_t pkt);
-        result_fifo.write(pkt);
-    endfunction : write_result
+    function void write(result_packet_t t);
+        result_fifo.write(t);
+    endfunction : write
 
 
     protected function automatic int get_expected_port(input logic [7:0] addr);

@@ -27,7 +27,7 @@ class random_tpgen extends base_tpgen;
             bfm.wait_clock_cycles(5);
         end
 
-        //bfm.wait_clock_cycles(10000);
+        bfm.wait_clock_cycles(10000);
     endtask : drive_stimulus
 
 endclass : random_tpgen

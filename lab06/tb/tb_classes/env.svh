@@ -52,12 +52,12 @@ class env extends uvm_env;
         driver_h.command_port.connect(command_f.get_export);
 
         // Monitory → scoreboard
-        command_monitor_h.ap.connect(scoreboard_h.cmd_imp);
-        result_monitor_h.ap.connect(scoreboard_h.result_imp);
+        command_monitor_h.ap.connect(scoreboard_h.cmd_fifo.analysis_export);
+        result_monitor_h.ap.connect(scoreboard_h.analysis_export);
 
         // Monitory → coverage 
         command_monitor_h.ap.connect(coverage_h.cmd_imp);
-        result_monitor_h.ap.connect(coverage_h.result_imp);
+        
     endfunction : connect_phase
 
     //------------------------------------------------------------------------------

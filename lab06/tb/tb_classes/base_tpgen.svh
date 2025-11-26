@@ -33,7 +33,7 @@ virtual class base_tpgen extends uvm_component;
     // random data helper
     //------------------------------------------------------------------------------
     protected function automatic logic [7:0] generate_random_data();
-        return $urandom_range(int'(8'hFF), int'(8'h00));
+        return $random & 'hFF;
     endfunction : generate_random_data
     
     protected function automatic int get_expected_port(input logic [7:0] addr);
