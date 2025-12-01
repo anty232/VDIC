@@ -32,6 +32,16 @@ class driver extends uvm_component;
 
         forever begin
             command_port.get(cmd);
+            if (cmd.request_reset) begin
+                bfm.reset_switch();
+                continue;
+            end
+
+            if (cmd.request_wait) begin
+                bfm.wait_clock_cycles(cmd.wait_cycles);
+                continue;
+            end
+            
             if (cmd.set_prog_valid)
                 bfm.set_prog(cmd.prog_value);
 

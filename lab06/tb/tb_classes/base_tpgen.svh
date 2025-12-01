@@ -5,7 +5,7 @@ virtual class base_tpgen extends uvm_component;
     //------------------------------------------------------------------------------
     // local variables
     //------------------------------------------------------------------------------
-    protected virtual bfm_if bfm;
+    bit prog_mode;
 
     uvm_blocking_put_port #(driver_command_t) command_port;
 
@@ -17,9 +17,6 @@ virtual class base_tpgen extends uvm_component;
     endfunction : new
 
     function void build_phase(uvm_phase phase);
-        if(!uvm_config_db#(virtual bfm_if)::get(null, "*", "bfm", bfm))
-            `uvm_fatal("TPGEN", "Failed to get BFM")
-
         command_port = new("command_port", this);
     endfunction : build_phase
 
@@ -48,6 +45,12 @@ virtual class base_tpgen extends uvm_component;
     //------------------------------------------------------------------------------
     // random data helper
     //------------------------------------------------------------------------------
+    protected function automatic driver_command_t make_default_command();
+        driver_command_t cmd;
+        cmd = '{default:0};
+        return cmd;
+    endfunction : make_default_command
+
     protected function automatic logic [7:0] generate_random_data();
         return $random & 'hFF;
     endfunction : generate_random_data
@@ -68,23 +71,23 @@ virtual class base_tpgen extends uvm_component;
 
         phase.raise_objection(this);
 
-        bfm.reset_switch();
-        bfm.wait_clock_cycles(10);
+        request_reset();
+        wait_clock_cycles(10);
 
         clear_routing_table();
-        program_all_addresses(1);
+        program_all_addresses(0);
         print_colored("Programowanie zakonczone  przejscie do testu ramek uszkodzonych\n", "yellow");
         set_prog_mode(0);
-        bfm.wait_clock_cycles(10000);
+        wait_clock_cycles(10000);
         
 
         for (int unsigned idx = 0; idx < get_transaction_count(); idx++) begin
             txn = get_transaction(idx);
             run_uart_packet_case(txn.test_name, txn.addr, txn.data, txn.verbose);
-            bfm.wait_clock_cycles(5);
+            wait_clock_cycles(5);
         end
 
-        bfm.wait_clock_cycles(10000);
+        wait_clock_cycles(10000);
 
         phase.drop_objection(this);
     endtask : run_phase
@@ -98,6 +101,24 @@ virtual class base_tpgen extends uvm_component;
     //------------------------------------------------------------------------------
     // helper tasks shared by generators
     //------------------------------------------------------------------------------
+    protected task request_reset();
+        driver_command_t cmd;
+
+        cmd = make_default_command();
+        cmd.request_reset = 1;
+        command_port.put(cmd);
+    endtask : request_reset
+
+    protected task wait_clock_cycles(input int unsigned cycles);
+        driver_command_t cmd;
+
+        cmd = make_default_command();
+        cmd.request_wait = 1;
+        cmd.wait_cycles  = cycles;
+        command_port.put(cmd);
+    endtask : wait_clock_cycles
+
+
     protected task add_routing_entry(input logic [7:0] addr, input logic [7:0] port);
         int found = 0;
         foreach (routing_table[i]) begin
@@ -113,32 +134,29 @@ virtual class base_tpgen extends uvm_component;
     protected task set_prog_mode(bit progset);
         driver_command_t cmd;
 
-        cmd.addr            = '0;
-        cmd.data            = '0;
+        cmd                = make_default_command();
         cmd.set_prog_valid  = 1;
         cmd.prog_value      = progset;
-        cmd.use_custom_bits = 0;
 
         command_port.put(cmd);
+        prog_mode = progset;
     endtask : set_prog_mode
 
     protected task clear_routing_table();
         routing_table.delete();
     endtask : clear_routing_table
 
+
     protected task send_uart_packet(input logic [7:0] b0, input logic [7:0] b1);
         driver_command_t cmd;
 
+        cmd                 = make_default_command();
         cmd.addr            = b0;
         cmd.data            = b1;
-        cmd.set_prog_valid  = 0;
-        cmd.prog_value      = 0;
-        cmd.use_custom_bits = 0;
-
 
         command_port.put(cmd);
 
-        if (bfm.prog)
+        if (prog_mode)
             add_routing_entry(b0, b1);
     endtask : send_uart_packet
 
@@ -150,7 +168,7 @@ virtual class base_tpgen extends uvm_component;
 
         clear_routing_table();
         set_prog_mode(1);
-        bfm.sin  = 1;
+        //bfm.sin  = 1;
 
         for (int i = 0; i < NUM_ADDRS; i++) begin
             logic [7:0] addr_local = i[7:0];
@@ -162,7 +180,7 @@ virtual class base_tpgen extends uvm_component;
                 port_local = (i < NUM_ADDRS/2) ? 8'h01 : 8'h00;
 
             send_uart_packet(addr_local, port_local);
-            bfm.wait_clock_cycles(5);
+            wait_clock_cycles(5);
         end
         print_colored("Programowanie tras zakonczone", "yellow");
         //bfm.prog = 0;

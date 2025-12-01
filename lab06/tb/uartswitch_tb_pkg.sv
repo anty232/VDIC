@@ -57,6 +57,9 @@ package uartswitch_tb_pkg;
         bit         data_parity_bit;
         bit         addr_stop_bit;
         bit         data_stop_bit;
+        bit         request_reset;
+        bit         request_wait;
+        int unsigned wait_cycles;
     } driver_command_t;
 
 
