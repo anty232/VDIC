@@ -8,10 +8,11 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
     
 
     uvm_tlm_analysis_fifo #(input_transaction_t) cmd_fifo;
-    uvm_tlm_analysis_fifo #(result_packet_t)     result_fifo;
 
-    // Pending results keyed by port number
-    result_packet_t pending_results[int][$];
+
+    
+    // Pending commands keyed by port number
+    input_transaction_t pending_cmds[int][$];
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
@@ -19,11 +20,54 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
 
     function void build_phase(uvm_phase phase);
         cmd_fifo    = new("cmd_fifo", this);
-        result_fifo = new("result_fifo", this);
     endfunction : build_phase
 
+
     function void write(result_packet_t t);
-        result_fifo.write(t);
+        input_transaction_t tx;
+
+        if (pending_cmds.exists(t.port) && pending_cmds[t.port].size() > 0)
+            tx = pending_cmds[t.port].pop_front();
+        else begin
+            forever begin
+                if (!cmd_fifo.try_get(tx))
+                    `uvm_fatal("SCBD", $sformatf("Brak komendy odpowiadajacej wynikowi z port%0d", t.port))
+
+                if (!tx.valid)
+                    continue;
+
+                tx.port = (tx.port == -1) ? get_expected_port(tx.addr) : tx.port;
+
+                if (tx.port == -1) begin
+                    record_test_result(
+                        tx.expect_no_output ? TEST_PASSED : TEST_FAILED,
+                        $sformatf(
+                            "[%0t] %s  brak wpisu routingu dla addr=0x%0h%s",
+                            $time,
+                            tx.test_name,
+                            tx.addr,
+                            tx.expect_no_output ? " (oczekiwano)" : ""
+                        )
+                    );
+                    continue;
+                end
+
+                if (tx.port == t.port)
+                    break;
+
+                pending_cmds[tx.port].push_back(tx);
+            end
+        end
+
+        $display(
+            "[%0t] SCOREBOARD: tx.valid=%0b addr=0x%0h port=%0d expect_no_output=%0b name=%s",
+            $time, tx.valid, tx.addr, tx.port, tx.expect_no_output, tx.test_name
+        );
+
+        if (tx.expect_no_output)
+            expect_no_frames(tx.test_name, tx.addr, tx.port, t);
+        else
+            compare_expected_data(tx, t);
     endfunction : write
 
 
@@ -35,23 +79,26 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
         return -1;
     endfunction : get_expected_port
 
-    protected task automatic record_test_result(
+    protected function automatic void record_test_result(
         input test_result_t result,
         input string        message
     );
         case (result)
             TEST_PASSED: begin
                 passed_tests++;
-                print_colored(message, "green");
+                set_print_color(COLOR_BOLD_BLACK_ON_GREEN);
+                $display(message);
             end
             TEST_FAILED: begin
                 failed_tests++;
-                print_colored(message, "red");
+                set_print_color(COLOR_BOLD_BLACK_ON_RED);
+                $display(message);
             end
         endcase
-    endtask : record_test_result
+        set_print_color(COLOR_DEFAULT);
+    endfunction : record_test_result
 
-    protected task automatic compare_frames(
+    protected function automatic void compare_frames(
         input uart_frame_t captured_frames[$],
         input uart_frame_t expected_frames[$]
     );
@@ -62,8 +109,11 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
         min_len = (captured_frames.size() < expected_frames.size())
                   ? captured_frames.size() : expected_frames.size();
 
-        if (min_len == 0)
-            print_colored("Brak ramek do porownania", "yellow");
+        if (min_len == 0) begin
+            set_print_color(COLOR_BOLD_BLACK_ON_YELLOW);
+            $display("Brak ramek do porownania");
+            set_print_color(COLOR_DEFAULT);
+        end
 
         for (int i = 0; i < min_len; i++) begin
             if (captured_frames[i] !== expected_frames[i]) begin
@@ -89,49 +139,33 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
                        ? (captured_frames.size() - expected_frames.size())
                        : (expected_frames.size() - captured_frames.size());
             mismatches += diff;
-            print_colored($sformatf("Rozna liczba ramek  recv=%0d exp=%0d",
-                                   captured_frames.size(), expected_frames.size()), "yellow");
+            set_print_color(COLOR_BOLD_BLACK_ON_YELLOW);
+            $display("Rozna liczba ramek  recv=%0d exp=%0d", captured_frames.size(), expected_frames.size());
+            set_print_color(COLOR_DEFAULT);
         end
 
         if (mismatches == 0)
-            record_test_result(TEST_PASSED,
-                                "TEST PASSED  ramki na wyjsciu zgodne z wejsciem");
+            record_test_result(
+                TEST_PASSED,
+                "TEST PASSED  ramki na wyjsciu zgodne z wejsciem"
+            );
         else
-            record_test_result(TEST_FAILED,
-                                $sformatf("TEST FAILED  %0d roznic w ramkach", mismatches));
+            record_test_result(
+                TEST_FAILED,
+                $sformatf("TEST FAILED  %0d roznic w ramkach", mismatches)
+            );
         $write("\n\n");
-    endtask : compare_frames
+    endfunction : compare_frames
 
-    protected task automatic pull_result_for_port(
-        input int               port,
-        output result_packet_t  pkt
+
+
+    protected function automatic void expect_no_frames(
+        input string           test_name,
+        input logic [7:0]      addr,
+        input int              expected_port,
+        input result_packet_t  pkt
     );
-        result_packet_t temp;
-
-        if (pending_results.exists(port) && pending_results[port].size() > 0) begin
-            pkt = pending_results[port].pop_front();
-            return;
-        end
-
-        forever begin
-            result_fifo.get(temp);
-            if (temp.port == port) begin
-                pkt = temp;
-                return;
-            end
-
-            pending_results[temp.port].push_back(temp);
-        end
-    endtask : pull_result_for_port
-
-    protected task automatic expect_no_frames(
-        input string            test_name,
-        input logic [7:0]       addr,
-        input int               expected_port
-    );
-        result_packet_t pkt;
-
-        pull_result_for_port(expected_port, pkt);
+        
 
         if (pkt.frames.size() == 0) begin
             record_test_result(
@@ -159,76 +193,33 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
         end
 
         $write("\n");
-    endtask : expect_no_frames
+    endfunction : expect_no_frames
 
-    protected task automatic compare_expected_data(input input_transaction_t tx);
-        result_packet_t pkt;
-    
-        pull_result_for_port(tx.port, pkt);
-    
+    protected function automatic void compare_expected_data(
+        input input_transaction_t tx,
+        input result_packet_t     pkt
+    );
         $display("--- EXPECTED (tx.frames) ---");
         foreach (tx.frames[i])
             $display("  TX[%0d] %s", i, frame_to_string(tx.frames[i]));
-    
+
         $display("--- RECEIVED (pkt.frames) ---");
         foreach (pkt.frames[i])
             $display("  RX[%0d] %s", i, frame_to_string(pkt.frames[i]));
-    
+
         if (pkt.timed_out) begin
-            print_colored($sformatf(
+            set_print_color(COLOR_BOLD_BLACK_ON_YELLOW);
+            $display(
                 "[%0t] Timeout raportowany przez monitor dla port%0d",
                 $time, pkt.port
-            ), "yellow");
+            );
+            set_print_color(COLOR_DEFAULT);
         end
-    
+
         compare_frames(pkt.frames, tx.frames);
-    endtask
-
-    protected task automatic process_transaction(input input_transaction_t tx);
-        
-        if (!tx.valid)
-            return;
+    endfunction : compare_expected_data
 
 
-        tx.port = (tx.port == -1) ? get_expected_port(tx.addr) : tx.port;
-
-        $display("[%0t] SCOREBOARD: tx.valid=%0b addr=0x%0h port=%0d expect_no_output=%0b name=%s",
-                $time, tx.valid, tx.addr, tx.port, tx.expect_no_output, tx.test_name);
-
-        if (tx.port == -1) begin
-            if (tx.expect_no_output) begin
-                record_test_result(TEST_PASSED,
-                    $sformatf("[%0t] %s  brak wpisu routingu dla addr=0x%0h (oczekiwano)",
-                              $time, tx.test_name, tx.addr));
-            end
-            else begin
-                record_test_result(TEST_FAILED,
-                    $sformatf("[%0t] %s  brak wpisu routingu dla addr=0x%0h",
-                              $time, tx.test_name, tx.addr));
-            end
-            return;
-        end
-
-        $display("[%0t] %s  addr=0x%0h (port%0d)", $time, tx.test_name, tx.addr, tx.port);
-
-        if (tx.expect_no_output)
-            expect_no_frames(tx.test_name, tx.addr, tx.port);
-        else
-            compare_expected_data(tx);
-    endtask : process_transaction
-
-    task run_phase(uvm_phase phase);
-        fork
-            begin : process_cmds
-                input_transaction_t tx;
-
-                forever begin
-                    cmd_fifo.get(tx);
-                    process_transaction(tx);
-                end
-            end : process_cmds
-        join
-    endtask : run_phase
 
     function void report_phase(uvm_phase phase);
         static string green_esc = "\033[1;32m";

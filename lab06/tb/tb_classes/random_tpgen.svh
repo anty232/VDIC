@@ -9,25 +9,21 @@ class random_tpgen extends base_tpgen;
     endfunction : new
 
     //------------------------------------------------------------------------------
-    // stimulus body
+    // transaction generators
     //------------------------------------------------------------------------------
-    protected task drive_stimulus();
-         
-        program_all_addresses();
-        print_colored("Programowanie zakonczone  przejscie do testu ramek uszkodzonych\n", "yellow");
-        //print_routing_table();
-        bfm.wait_clock_cycles(10000);
-        bfm.set_prog(0);
+    protected function int unsigned get_transaction_count();
+        return NUM_ADDRS;
+    endfunction : get_transaction_count
 
-        for (int addr_idx = 0; addr_idx < NUM_ADDRS; addr_idx++) begin
-            logic [7:0] addr_local = addr_idx[7:0];
-            logic [7:0] random_data = generate_random_data();
+    protected function tpgen_txn_t get_transaction(int unsigned idx);
+        tpgen_txn_t txn;
 
-            run_uart_packet_case("Losowe dane forwarding", addr_local, random_data, 0);
-            bfm.wait_clock_cycles(5);
-        end
+        txn.test_name = "Losowe dane forwarding";
+        txn.addr      = idx[7:0];
+        txn.data      = generate_random_data();
+        txn.verbose   = 0;
 
-        bfm.wait_clock_cycles(10000);
-    endtask : drive_stimulus
+        return txn;
+    endfunction : get_transaction
 
 endclass : random_tpgen

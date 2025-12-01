@@ -48,6 +48,8 @@ package uartswitch_tb_pkg;
     typedef struct {
         logic [7:0] addr;
         logic [7:0] data;
+        bit         set_prog_valid;
+        bit         prog_value;
         bit         use_custom_bits;
         bit         addr_start_bit;
         bit         data_start_bit;

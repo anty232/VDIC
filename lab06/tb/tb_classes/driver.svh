@@ -32,6 +32,11 @@ class driver extends uvm_component;
 
         forever begin
             command_port.get(cmd);
+            if (cmd.set_prog_valid)
+                bfm.set_prog(cmd.prog_value);
+
+            if (cmd.set_prog_valid && !cmd.use_custom_bits && cmd.addr === '0 && cmd.data === '0)
+                continue;
 
             if (cmd.use_custom_bits) begin
                 bfm.send_uart_byte_custom(cmd.addr_start_bit, cmd.addr, cmd.addr_parity_bit, cmd.addr_stop_bit);

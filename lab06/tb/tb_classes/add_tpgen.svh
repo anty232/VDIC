@@ -9,45 +9,34 @@ class add_tpgen extends random_tpgen;
     endfunction : new
 
     //------------------------------------------------------------------------------
-    // stimulus body
+    // transaction generators
     //------------------------------------------------------------------------------
-    protected task drive_stimulus();
+    protected function int unsigned get_transaction_count();
+        return 6;
+    endfunction : get_transaction_count
+
+    protected function tpgen_txn_t get_transaction(int unsigned idx);
+        tpgen_txn_t txn;
+
         static logic [7:0] addr_max = 8'hBB;
         static logic [7:0] addr_min = 8'hAA;
         static logic [7:0] data     = 8'h99;
 
-        program_all_addresses(0);
-        //sent_frames.delete();
-        print_colored("Programowanie zakonczone  przejscie do testu max_min\n", "yellow");
-        //print_routing_table();
- 
-        
-        //run_full_forwarding_sweep();
+        case (idx)
+            0, 2, 4: begin
+                txn.test_name = "edge_addres_max";
+                txn.addr      = addr_max;
+            end
+            default: begin
+                txn.test_name = "edge_addres_min";
+                txn.addr      = addr_min;
+            end
+        endcase
 
-        bfm.wait_clock_cycles(10000);
-        bfm.set_prog(0);
-        run_uart_packet_case("edge_addres_max", addr_max, data, 1);
-        run_uart_packet_case("edge_addres_min", addr_min, data, 1);
-        run_uart_packet_case("edge_addres_max", addr_max, data, 1);
-        run_uart_packet_case("edge_addres_min", addr_min, data, 1);
-        run_uart_packet_case("edge_addres_max", addr_max, data, 1);
-        run_uart_packet_case("edge_addres_min", addr_min, data, 1);
-        
+        txn.data    = data;
+        txn.verbose = 1;
 
-
-        bfm.wait_clock_cycles(10000);
-
-        //bfm.reset_switch();
-        //bfm.wait_clock_cycles(10);
-
-        //program_all_addresses();
-        //print_colored("Programowanie zakonczone  przejscie do testu forwarding\n", "yellow");
-        //print_routing_table();
-        //sent_frames.delete();
-        //bfm.set_prog(0);
-
-        //run_full_forwarding_sweep();
-
-    endtask : drive_stimulus
+        return txn;
+    endfunction : get_transaction
 
 endclass : add_tpgen

@@ -23,18 +23,7 @@ interface bfm_if;
     //------------------------------------------------------------------------------
     time timeout_cycles = TIMEOUT_CYCLES;
 
- /*
-    //------------------------------------------------------------------------------
-    // Coverage signaling
-    //------------------------------------------------------------------------------
-    logic [7:0]    cov_addr;
-    logic [7:0]    cov_data;
-    int            cov_port;
-    frame_kind_t   cov_err_frame_kind;
-    frame_error_t  cov_err_error_type;
-    int            cov_rst_port;
-*/
-
+ 
     //------------------------------------------------------------------------------
     // Clock generator and default values
     //------------------------------------------------------------------------------
@@ -248,15 +237,22 @@ interface bfm_if;
         ref logic serial_line,
         input int port
     );
+    
+        if (prog === 1'b1) begin
+            @(negedge prog);  // koniec programowania
+        end
+        else begin
+            @(posedge prog);  // start programowania
+            @(negedge prog);  // koniec programowania
+        end
+    
         forever begin
             result_packet_t pkt;
             uart_frame_t    frames[$];
             bit             start_found;
 
 
-            if (prog) begin
-                wait (!prog);
-            end
+
 
             wait_for_next_start_bit(serial_line, port_name, start_found);
 

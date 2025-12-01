@@ -23,11 +23,27 @@ virtual class base_tpgen extends uvm_component;
         command_port = new("command_port", this);
     endfunction : build_phase
 
+    typedef struct {
+        string       test_name;
+        logic [7:0]  addr;
+        logic [7:0]  data;
+        bit          verbose;
+    } tpgen_txn_t;
+
     //------------------------------------------------------------------------------
     // function prototypes
     //------------------------------------------------------------------------------
-    pure virtual protected task drive_stimulus();
-
+    
+    pure virtual function int unsigned get_transaction_count();
+    pure virtual function tpgen_txn_t get_transaction(int unsigned idx);
+    //------------------------------------------------------------------------------
+    // implemented virtual methods (tu może być protected)
+    //------------------------------------------------------------------------------
+    
+    
+    
+    
+    
 
     //------------------------------------------------------------------------------
     // random data helper
@@ -48,15 +64,36 @@ virtual class base_tpgen extends uvm_component;
     // run phase
     //------------------------------------------------------------------------------
     task run_phase(uvm_phase phase);
+        tpgen_txn_t txn;
+
         phase.raise_objection(this);
 
         bfm.reset_switch();
         bfm.wait_clock_cycles(10);
 
-        drive_stimulus();
+        clear_routing_table();
+        program_all_addresses(1);
+        print_colored("Programowanie zakonczone  przejscie do testu ramek uszkodzonych\n", "yellow");
+        set_prog_mode(0);
+        bfm.wait_clock_cycles(10000);
+        
+
+        for (int unsigned idx = 0; idx < get_transaction_count(); idx++) begin
+            txn = get_transaction(idx);
+            run_uart_packet_case(txn.test_name, txn.addr, txn.data, txn.verbose);
+            bfm.wait_clock_cycles(5);
+        end
+
+        bfm.wait_clock_cycles(10000);
 
         phase.drop_objection(this);
     endtask : run_phase
+
+    protected virtual function int unsigned get_inter_transaction_delay(int unsigned idx);
+        return 5;
+    endfunction : get_inter_transaction_delay
+
+   
 
     //------------------------------------------------------------------------------
     // helper tasks shared by generators
@@ -73,6 +110,18 @@ virtual class base_tpgen extends uvm_component;
             routing_table.push_back('{addr, port});
     endtask : add_routing_entry
 
+    protected task set_prog_mode(bit progset);
+        driver_command_t cmd;
+
+        cmd.addr            = '0;
+        cmd.data            = '0;
+        cmd.set_prog_valid  = 1;
+        cmd.prog_value      = progset;
+        cmd.use_custom_bits = 0;
+
+        command_port.put(cmd);
+    endtask : set_prog_mode
+
     protected task clear_routing_table();
         routing_table.delete();
     endtask : clear_routing_table
@@ -82,7 +131,10 @@ virtual class base_tpgen extends uvm_component;
 
         cmd.addr            = b0;
         cmd.data            = b1;
+        cmd.set_prog_valid  = 0;
+        cmd.prog_value      = 0;
         cmd.use_custom_bits = 0;
+
 
         command_port.put(cmd);
 
@@ -97,7 +149,7 @@ virtual class base_tpgen extends uvm_component;
             print_colored("Start programowania tras (standardowe przypisanie)", "yellow");
 
         clear_routing_table();
-        bfm.prog = 1;
+        set_prog_mode(1);
         bfm.sin  = 1;
 
         for (int i = 0; i < NUM_ADDRS; i++) begin
