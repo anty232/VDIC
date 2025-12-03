@@ -11,7 +11,7 @@ class coverage extends uvm_component;
     //----------------------------------------------------------------------------
 
     // Z command_monitor_h dostajemy input_transaction_t
-    uvm_analysis_imp_cmd    #(input_transaction_t, coverage) cmd_imp;
+    uvm_analysis_imp_cmd    #(command_transaction, coverage) cmd_imp;
 
 
     //----------------------------------------------------------------------------
@@ -70,7 +70,7 @@ class coverage extends uvm_component;
     //----------------------------------------------------------------------------
     // write_cmd  wywoływane z command_monitor_h.ap.write(tx)
     //----------------------------------------------------------------------------
-    function void write_cmd(input_transaction_t tx);
+    function void write_cmd(command_transaction tx);
         
         if (!tx.valid)
             return;

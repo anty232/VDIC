@@ -4,8 +4,8 @@ class env extends uvm_env;
     //------------------------------------------------------------------------------
     // testbench elements
     //------------------------------------------------------------------------------
-    random_tpgen                    tpgen_h;
-    uvm_tlm_fifo #(driver_command_t) command_f;
+    tpgen                            tpgen_h;
+    uvm_tlm_fifo #(command_transaction) command_f;
     driver                          driver_h;
     coverage                        coverage_h;
     scoreboard                      scoreboard_h;
@@ -32,7 +32,7 @@ class env extends uvm_env;
         result_monitor_h  = result_monitor ::type_id::create("result_monitor_h",  this);
         scoreboard_h      = scoreboard     ::type_id::create("scoreboard_h",      this);
         driver_h          = driver         ::type_id::create("driver_h",          this);
-        tpgen_h           = random_tpgen   ::type_id::create("tpgen_h",           this);
+        tpgen_h           = tpgen          ::type_id::create("tpgen_h",           this);
 
         // FIFO pomiędzy tpgen a driverem
         command_f = new("command_f", this);

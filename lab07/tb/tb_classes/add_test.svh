@@ -15,9 +15,7 @@ class add_test extends random_test;
 
         super.build_phase(phase);
 
-        // set the factory to produce a add_tpgen whenever it would produce
-        // a random_tpgen
-        random_tpgen::type_id::set_type_override(add_tpgen::get_type());
+        command_transaction::type_id::set_type_override(add_transaction::get_type());
 
     endfunction : build_phase
 

@@ -204,14 +204,16 @@ interface bfm_if;
         end
         
         forever begin
-            input_transaction_t tx;
-            uart_frame_t        frames[$];
-            bit                 start_found;
+            command_transaction tx;
+            uart_frame_t       frames[$];
+            bit                start_found;
 
 
 
 
             wait_for_next_start_bit(sin, "sin", start_found);
+
+            tx = command_transaction::type_id::create("cmd_from_bfm");
 
             if (!start_found) begin
                 tx.valid = 0;
@@ -247,14 +249,16 @@ interface bfm_if;
         end
     
         forever begin
-            result_packet_t pkt;
-            uart_frame_t    frames[$];
-            bit             start_found;
+            result_transaction pkt;
+            uart_frame_t      frames[$];
+            bit               start_found;
 
 
 
 
             wait_for_next_start_bit(serial_line, port_name, start_found);
+
+            pkt = result_transaction::type_id::create($sformatf("pkt_port_%0d", port));
 
             if (!start_found) begin
                 pkt.port      = port;

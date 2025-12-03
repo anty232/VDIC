@@ -6,7 +6,7 @@ class result_monitor extends uvm_component;
     //------------------------------------------------------------------------------
     protected virtual bfm_if bfm;
 
-    uvm_analysis_port #(result_packet_t) ap;
+    uvm_analysis_port #(result_transaction) ap;
 
     //------------------------------------------------------------------------------
     // constructor
@@ -29,7 +29,7 @@ class result_monitor extends uvm_component;
     //------------------------------------------------------------------------------
     // monitoring function called from BFM
     //------------------------------------------------------------------------------
-    function void write_to_monitor(result_packet_t pkt);
+    function void write_to_monitor(result_transaction pkt);
         ap.write(pkt);
     endfunction : write_to_monitor
 

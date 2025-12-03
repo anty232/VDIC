@@ -5,7 +5,7 @@ class driver extends uvm_component;
     // local variables
     //------------------------------------------------------------------------------
     protected virtual bfm_if bfm;
-    uvm_get_port #(driver_command_t) command_port;
+    uvm_get_port #(command_transaction) command_port;
 
     //------------------------------------------------------------------------------
     // constructor
@@ -28,7 +28,7 @@ class driver extends uvm_component;
     // run phase
     //------------------------------------------------------------------------------
     task run_phase(uvm_phase phase);
-        driver_command_t cmd;
+        command_transaction cmd;
 
         forever begin
             command_port.get(cmd);

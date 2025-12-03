@@ -1,4 +1,4 @@
-class scoreboard extends uvm_subscriber #(result_packet_t);
+class scoreboard extends uvm_subscriber #(result_transaction);
 
     `uvm_component_utils(scoreboard)
 
@@ -7,12 +7,12 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
 
     
 
-    uvm_tlm_analysis_fifo #(input_transaction_t) cmd_fifo;
+    uvm_tlm_analysis_fifo #(command_transaction) cmd_fifo;
 
 
     
     // Pending commands keyed by port number
-    input_transaction_t pending_cmds[int][$];
+    command_transaction pending_cmds[int][$];
 
     function new(string name, uvm_component parent);
         super.new(name, parent);
@@ -23,8 +23,8 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
     endfunction : build_phase
 
 
-    function void write(result_packet_t t);
-        input_transaction_t tx;
+    function void write(result_transaction t);
+        command_transaction tx;
 
         if (pending_cmds.exists(t.port) && pending_cmds[t.port].size() > 0)
             tx = pending_cmds[t.port].pop_front();
@@ -160,14 +160,20 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
 
 
     protected function automatic void expect_no_frames(
-        input string           test_name,
-        input logic [7:0]      addr,
-        input int              expected_port,
-        input result_packet_t  pkt
+        input string             test_name,
+        input logic [7:0]        addr,
+        input int                expected_port,
+        input result_transaction pkt
     );
         
 
-        if (pkt.frames.size() == 0) begin
+    result_transaction expected;
+
+    expected = result_transaction::type_id::create("expected_no_frames");
+    expected.port      = expected_port;
+    expected.timed_out = pkt.timed_out;
+
+        if (pkt.compare(expected))
             record_test_result(
                 TEST_PASSED,
                 $sformatf(
@@ -176,7 +182,7 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
                     expected_port == 0 ? "sout0" : "sout1"
                 )
             );
-        end
+        
         else begin
             record_test_result(
                 TEST_FAILED,
@@ -196,9 +202,11 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
     endfunction : expect_no_frames
 
     protected function automatic void compare_expected_data(
-        input input_transaction_t tx,
-        input result_packet_t     pkt
+        input command_transaction tx,
+        input result_transaction pkt
     );
+        result_transaction expected;
+
         $display("--- EXPECTED (tx.frames) ---");
         foreach (tx.frames[i])
             $display("  TX[%0d] %s", i, frame_to_string(tx.frames[i]));
@@ -207,16 +215,27 @@ class scoreboard extends uvm_subscriber #(result_packet_t);
         foreach (pkt.frames[i])
             $display("  RX[%0d] %s", i, frame_to_string(pkt.frames[i]));
 
-        if (pkt.timed_out) begin
-            set_print_color(COLOR_BOLD_BLACK_ON_YELLOW);
-            $display(
-                "[%0t] Timeout raportowany przez monitor dla port%0d",
-                $time, pkt.port
-            );
-            set_print_color(COLOR_DEFAULT);
-        end
+        expected = result_transaction::type_id::create("expected_pkt");
+        expected.port      = tx.port;
+        expected.frames    = tx.frames;
+        expected.timed_out = 0;
 
-        compare_frames(pkt.frames, tx.frames);
+        if (!pkt.compare(expected)) begin
+            record_test_result(
+                TEST_FAILED,
+                $sformatf(
+                    "TEST FAILED  ramki na wyjsciu niezgodne z wejsciem dla addr=0x%0h",
+                    tx.addr
+                )
+            );
+        end
+        else
+            record_test_result(
+                TEST_PASSED,
+                "TEST PASSED  ramki na wyjsciu zgodne z wejsciem"
+            );
+
+        $write("\n\n");
     endfunction : compare_expected_data
 
 

@@ -45,47 +45,7 @@ package uartswitch_tb_pkg;
 
     routing_entry_t routing_table[$];
 
-    typedef struct {
-        logic [7:0] addr;
-        logic [7:0] data;
-        bit         set_prog_valid;
-        bit         prog_value;
-        bit         use_custom_bits;
-        bit         addr_start_bit;
-        bit         data_start_bit;
-        bit         addr_parity_bit;
-        bit         data_parity_bit;
-        bit         addr_stop_bit;
-        bit         data_stop_bit;
-        bit         request_reset;
-        bit         request_wait;
-        int unsigned wait_cycles;
-    } driver_command_t;
 
-
-    //------------------------------------------------------------------------------
-    // Shared stimulus bookkeeping
-    //------------------------------------------------------------------------------
-
-
-    //uart_frame_t sent_frames[$];
-
-
-    typedef struct {
-        string        test_name;
-        logic [7:0]   addr;
-        bit           expect_no_output;
-        bit           from_programming;
-        int           port;
-        uart_frame_t  frames[$];
-        bit           valid;
-    } input_transaction_t;
-
-    typedef struct {
-        int          port;
-        uart_frame_t frames[$];
-        bit          timed_out;
-    } result_packet_t;
 
     typedef enum bit {
         TEST_PASSED,
@@ -140,13 +100,14 @@ package uartswitch_tb_pkg;
     //------------------------------------------------------------------------------
     // Testbench classes
     //------------------------------------------------------------------------------
+    `include "tb_classes/command_transaction.svh"
+    `include "tb_classes/result_transaction.svh"
+    `include "tb_classes/add_transaction.svh"
+    `include "tb_classes/tpgen.svh"
     `include "tb_classes/command_monitor.svh"
     `include "tb_classes/result_monitor.svh"
     `include "tb_classes/scoreboard.svh"
     `include "tb_classes/coverage.svh"
-    `include "tb_classes/base_tpgen.svh"
-    `include "tb_classes/random_tpgen.svh"
-    `include "tb_classes/add_tpgen.svh"
     `include "tb_classes/driver.svh"
     `include "tb_classes/env.svh"
 

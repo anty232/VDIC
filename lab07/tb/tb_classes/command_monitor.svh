@@ -6,7 +6,7 @@ class command_monitor extends uvm_component;
     //------------------------------------------------------------------------------
     protected virtual bfm_if bfm;
 
-    uvm_analysis_port #(input_transaction_t) ap;
+    uvm_analysis_port #(command_transaction) ap;
 
     //------------------------------------------------------------------------------
     // constructor
@@ -29,7 +29,7 @@ class command_monitor extends uvm_component;
     //------------------------------------------------------------------------------
     // monitoring function called from BFM
     //------------------------------------------------------------------------------
-    function void write_to_monitor(input_transaction_t tx);
+    function void write_to_monitor(command_transaction tx);
         ap.write(tx);
     endfunction : write_to_monitor
 
